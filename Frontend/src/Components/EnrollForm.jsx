@@ -17,6 +17,9 @@ import { useClassroom } from "../context/ClassroomContext";
 import { useToast } from "../context/ToastContext";
 import ConfirmModal from "./ConfirmModal";
 import API_URL from "../config/api";
+import { downscaleImage } from "../utils/image";
+import StudentPhoto from "./StudentPhoto";
+import { fetchStudentPhoto } from "../utils/studentPhoto";
 
 // Compress preview image to reduce browser load
 const createCompressedPreview = (file, maxWidth = 400) => {
@@ -105,7 +108,7 @@ const EnrollForm = () => {
     const formData = new FormData();
     formData.append("name", name);
     formData.append("rollNumber", rollNumber);
-    formData.append("image", image);
+    formData.append("image", await downscaleImage(image, 1280));
     formData.append("classroomId", classroomId);
     setLoading(true);
     setMessage("");
@@ -135,7 +138,7 @@ const EnrollForm = () => {
     const formData = new FormData();
     formData.append("name", editing.name);
     formData.append("rollNumber", editing.rollNumber);
-    if (editing.image) formData.append("image", editing.image);
+    if (editing.image) formData.append("image", await downscaleImage(editing.image, 1280));
     setLoading(true);
     setMessage("");
     setError("");
@@ -161,7 +164,7 @@ const EnrollForm = () => {
     e.preventDefault();
     if (!addingPhoto || !addingPhoto.image) return;
     const formData = new FormData();
-    formData.append("image", addingPhoto.image);
+    formData.append("image", await downscaleImage(addingPhoto.image, 1280));
     setLoading(true);
     setMessage("");
     setError("");
@@ -246,7 +249,8 @@ const EnrollForm = () => {
   const startEdit = (student) => {
     setEditing({ ...student, image: null });
     setAddingPhoto(null);
-    setImagePreview(`${API_URL}/uploads/${student.image}?t=${Date.now()}`);
+    setImagePreview("");
+    fetchStudentPhoto(student._id, token, student.image).then(setImagePreview).catch(() => {});
     setName("");
     setRollNumber("");
     setImage(null);
@@ -258,7 +262,8 @@ const EnrollForm = () => {
   const startAddPhoto = (student) => {
     setAddingPhoto({ ...student, image: null });
     setEditing(null);
-    setImagePreview(`${API_URL}/uploads/${student.image}?t=${Date.now()}`);
+    setImagePreview("");
+    fetchStudentPhoto(student._id, token, student.image).then(setImagePreview).catch(() => {});
     setName("");
     setRollNumber("");
     setImage(null);
@@ -276,7 +281,7 @@ const EnrollForm = () => {
       <div className="grid xl:grid-cols-12 gap-8">
         {/* Enrollment form */}
         <div className="xl:col-span-4">
-          <div className="glass-card p-8 sticky top-24 border-t-4 border-t-[var(--border-subtle)]">
+          <div className="glass-card p-5 sm:p-8 xl:sticky xl:top-24">
             <h2 className="text-xl font-bold text-[var(--text-main)] mb-6 flex items-center gap-2">
               <span className="w-8 h-8 rounded-full flex items-center justify-center bg-[var(--bg-app)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
                 {addingPhoto ? (
@@ -501,7 +506,7 @@ const EnrollForm = () => {
               <p>No students enrolled in this classroom yet.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
               <AnimatePresence>
                 {students.map((student) => (
                   <Motion.div
@@ -510,56 +515,56 @@ const EnrollForm = () => {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="group relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-3xl overflow-hidden hover:shadow-lg transition-all"
+                    className="group relative bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl overflow-hidden hover:shadow-lg transition-all"
                   >
                     <div className="aspect-[4/3] relative overflow-hidden">
-                      <img
-                        src={`${API_URL}/uploads/${student.image}?t=${Date.now()}`}
-                        alt={student.name}
+                      <StudentPhoto
+                        student={student}
                         className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                      <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-all translate-y-2 group-hover:translate-y-0">
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 lg:group-hover:opacity-100 transition-opacity" />
+                      {/* Always visible on touch screens; revealed on hover on desktop */}
+                      <div className="absolute top-2 right-2 sm:top-3 sm:right-3 flex flex-wrap justify-end gap-1.5 sm:gap-2 transition-all lg:opacity-0 lg:translate-y-2 lg:group-hover:opacity-100 lg:group-hover:translate-y-0">
                         <button
                           onClick={() => startAddPhoto(student)}
                           title="Add Photo"
-                          className="p-2 bg-white/90 rounded-full text-slate-800 hover:text-green-600"
+                          className="p-1.5 sm:p-2 bg-white/90 backdrop-blur rounded-full shadow-sm text-slate-800 hover:text-green-600"
                         >
                           <FiPlus size={14} />
                         </button>
                         <button
                           onClick={() => startEdit(student)}
                           title="Edit"
-                          className="p-2 bg-white/90 rounded-full text-slate-800 hover:text-[var(--text-accent)]"
+                          className="p-1.5 sm:p-2 bg-white/90 backdrop-blur rounded-full shadow-sm text-slate-800 hover:text-[var(--text-accent)]"
                         >
                           <FiEdit2 size={14} />
                         </button>
                         <button
                           onClick={() => setResetConfirm(student)}
                           title="Reset Photos"
-                          className="p-2 bg-white/90 rounded-full text-slate-800 hover:text-orange-600"
+                          className="p-1.5 sm:p-2 bg-white/90 backdrop-blur rounded-full shadow-sm text-slate-800 hover:text-orange-600"
                         >
                           <FiRefreshCw size={14} />
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(student)}
                           title="Delete"
-                          className="p-2 bg-white/90 rounded-full text-slate-800 hover:text-red-600"
+                          className="p-1.5 sm:p-2 bg-white/90 backdrop-blur rounded-full shadow-sm text-slate-800 hover:text-red-600"
                         >
                           <FiTrash2 size={14} />
                         </button>
                       </div>
                     </div>
-                    <div className="p-5">
-                      <h3 className="text-[var(--text-main)] font-bold text-lg truncate">
+                    <div className="p-3 sm:p-5">
+                      <h3 className="text-[var(--text-main)] font-semibold text-sm sm:text-lg truncate">
                         {student.name}
                       </h3>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className="text-xs font-bold text-[var(--text-muted)] bg-[var(--bg-app)] px-2 py-1 rounded-md border border-[var(--border-subtle)]">
-                          ID: {student.rollNumber}
+                      <div className="flex flex-wrap items-center justify-between gap-1 mt-1.5">
+                        <span className="font-mono text-[11px] sm:text-xs text-[var(--text-secondary)] bg-[var(--bg-input)] px-2 py-0.5 rounded border border-[var(--border-subtle)] truncate max-w-full">
+                          {student.rollNumber}
                         </span>
-                        <span className="text-xs text-[var(--text-muted)]">
-                          {student.descriptorCount || 1} photo(s)
+                        <span className="text-[11px] sm:text-xs text-[var(--text-muted)]">
+                          {student.descriptorCount || 1} {(student.descriptorCount || 1) === 1 ? "sample" : "samples"}
                         </span>
                       </div>
                     </div>

@@ -1,355 +1,258 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { motion as Motion } from "framer-motion";
-import {
-  FiCamera,
-  FiUsers,
-  FiClock,
-  FiShield,
-  FiArrowRight,
-  FiMoon,
-  FiSun,
-  FiCheck,
-  FiZap,
-  FiLayers,
-  FiBarChart2,
-} from "react-icons/fi";
+import { FiCamera, FiArrowRight, FiArrowUpRight, FiMoon, FiSun } from "react-icons/fi";
+
+const EASE = [0.22, 1, 0.36, 1];
+
+const CAPABILITIES = [
+  {
+    title: "Group recognition",
+    desc: "A single classroom photograph is matched against every enrolled student using SCRFD detection and ArcFace embeddings.",
+  },
+  {
+    title: "Faculty review",
+    desc: "Nothing is saved automatically. Each match is shown with its face crop so the instructor confirms, corrects or skips it.",
+  },
+  {
+    title: "On-the-spot enrolment",
+    desc: "An unrecognised face can be enrolled as a new student directly from the review queue and marked present in the same step.",
+  },
+  {
+    title: "Eligibility analytics",
+    desc: "Per-student attendance percentage, at-risk and defaulter status against the 75% norm, and day-wise trends.",
+  },
+  {
+    title: "Manual register",
+    desc: "Students who are absent from the photograph can be marked from the register, with a clear audit of today's records.",
+  },
+  {
+    title: "Exports",
+    desc: "Attendance reports for any date range as CSV for spreadsheets, or a print-ready PDF for submission.",
+  },
+];
+
+const WORKFLOW = [
+  ["Enrol", "Register each student once with a reference photograph. The face template is stored, not shared."],
+  ["Capture", "Upload or capture a photograph of the class. Detection and matching complete in about a second."],
+  ["Verify", "Review the matches, resolve the unrecognised faces and mark absentees from the register."],
+  ["Report", "Attendance is recorded for the day and immediately reflected in classroom analytics."],
+];
 
 export default function LandingPage({ isDark, setIsDark }) {
   return (
-    <div className="min-h-screen bg-[var(--bg-app)] overflow-hidden">
-      {/* Ambient gradient background */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-[var(--color-primary)]/5 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-[var(--color-primary)]/3 rounded-full blur-3xl" />
-      </div>
-
+    <div className="min-h-screen overflow-hidden">
       {/* Top navigation */}
-      <nav className="fixed top-0 w-full z-50 backdrop-blur-md bg-[var(--bg-app)]/80 border-b border-[var(--border-subtle)]/50">
+      <nav className="glass-panel !rounded-none !border-x-0 !border-t-0 fixed top-0 w-full z-50">
         <div className="max-w-6xl mx-auto px-6">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-lg bg-[var(--color-primary)] flex items-center justify-center">
-                <FiCamera className="text-[var(--color-primary-text)] text-lg" />
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-md bg-[var(--color-primary)] flex items-center justify-center">
+                <FiCamera className="text-[var(--color-primary-text)]" />
               </div>
-              <span className="font-bold text-lg text-[var(--text-main)]">
-                SnapTick
-              </span>
+              <span className="font-semibold text-[var(--text-main)] tracking-tight">SnapTick</span>
+              <span className="eyebrow hidden sm:inline ml-2">Attendance Intelligence</span>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 sm:gap-2">
+              <a href="#capabilities" className="hidden md:inline text-sm text-[var(--text-secondary)] hover:text-[var(--text-main)] px-3 py-2">
+                Capabilities
+              </a>
+              <a href="#workflow" className="hidden md:inline text-sm text-[var(--text-secondary)] hover:text-[var(--text-main)] px-3 py-2">
+                Workflow
+              </a>
               <button
                 onClick={() => setIsDark(!isDark)}
-                className="p-2.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-all"
+                className="hidden sm:block p-2.5 rounded-md text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--bg-card)] transition-colors"
+                aria-label="Toggle theme"
               >
-                {isDark ? <FiSun size={18} /> : <FiMoon size={18} />}
+                {isDark ? <FiSun size={16} /> : <FiMoon size={16} />}
               </button>
-              <Link
-                to="/login"
-                className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] transition-colors px-3 py-2"
-              >
-                Log in
+              <Link to="/login" className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] px-2 sm:px-3 py-2 whitespace-nowrap">
+                Sign in
               </Link>
-              <Link
-                to="/login?register=true"
-                className="btn-primary px-4 py-2 rounded-lg text-sm"
-              >
-                Get Started
+              <Link to="/login?register=true" className="btn-primary px-3 sm:px-4 py-2 rounded-md text-sm whitespace-nowrap">
+                <span className="sm:hidden">Get started</span>
+                <span className="hidden sm:inline">Create workspace</span>
               </Link>
             </div>
           </div>
         </div>
       </nav>
 
-      {/* Hero section */}
-      <section className="pt-32 pb-24 px-6 relative">
-        <div className="max-w-6xl mx-auto">
-          <Motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-            className="max-w-3xl"
-          >
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)] text-xs font-semibold mb-6 border border-[var(--color-primary)]/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-primary)] animate-pulse" />
-              Powered by Computer Vision
-            </div>
-
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-[var(--text-main)] leading-[1.1] tracking-tight mb-6">
-              Attendance tracking
-              <br />
-              <span className="text-[var(--color-primary)]">
-                that just works.
-              </span>
-            </h1>
-
-            <p className="text-lg text-[var(--text-secondary)] mb-10 max-w-xl leading-relaxed">
-              Upload a group photo, and let AI recognize who&apos;s present.
-              Built for educators who value their time.
+      {/* Hero */}
+      <section className="pt-36 pb-20 px-6">
+        <div className="max-w-6xl mx-auto grid lg:grid-cols-[1.1fr_0.9fr] gap-14 items-end">
+          <Motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, ease: EASE }}>
+            <p className="eyebrow mb-6 flex items-center gap-2">
+              <span className="accent-dot" /> Biometric attendance for higher education
             </p>
-
-            <div className="flex flex-wrap items-center gap-4">
-              <Link
-                to="/login?register=true"
-                className="btn-primary px-6 py-3.5 rounded-xl text-base flex items-center gap-2 group"
-              >
-                Start for free
-                <FiArrowRight className="group-hover:translate-x-1 transition-transform" />
+            <h1 className="font-display text-[56px] sm:text-[76px] lg:text-[92px] leading-[0.95] text-[var(--text-main)] mb-8">
+              Every lecture,
+              <br />
+              <span className="italic">accounted for.</span>
+            </h1>
+            <p className="text-lg text-[var(--text-secondary)] max-w-xl leading-relaxed mb-10">
+              SnapTick records classroom attendance through verified face recognition,
+              keeps faculty in control of every entry, and turns the register into
+              eligibility analytics your department can act on.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link to="/login?register=true" className="btn-primary px-6 py-3.5 rounded-md flex items-center gap-2 group">
+                Create faculty workspace
+                <FiArrowRight className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
               <a
-                href="#how-it-works"
-                className="px-6 py-3.5 rounded-xl text-base font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] border border-[var(--border-subtle)] hover:border-[var(--color-primary)]/50 transition-all"
+                href="#workflow"
+                className="px-6 py-3.5 rounded-md font-medium text-[var(--text-main)] border border-[var(--border-subtle)] hover:border-[var(--text-muted)] bg-[var(--bg-card)] transition-colors"
               >
-                How it works
+                See the workflow
               </a>
             </div>
           </Motion.div>
 
-          {/* Key stats */}
+          {/* Product preview */}
           <Motion.div
-            initial={{ opacity: 0, y: 40 }}
+            initial={{ opacity: 0, y: 32 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-20 grid grid-cols-3 gap-8 max-w-2xl"
+            transition={{ duration: 0.9, delay: 0.15, ease: EASE }}
+            className="surface-ink rounded-2xl bg-[var(--bg-sidebar)] border border-black/30 p-5 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.55)]"
           >
-            {[
-              { value: "2 sec", label: "Average scan time" },
-              { value: "99.2%", label: "Recognition accuracy" },
-              { value: "Free", label: "For educators" },
-            ].map((stat, i) => (
-              <div key={i} className="text-center sm:text-left">
-                <div className="text-2xl sm:text-3xl font-bold text-[var(--text-main)]">
-                  {stat.value}
-                </div>
-                <div className="text-sm text-[var(--text-muted)] mt-1">
-                  {stat.label}
-                </div>
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <p className="eyebrow">Review queue</p>
+                <p className="font-semibold mt-1">BCA · Semester V · Lecture 3</p>
               </div>
-            ))}
-          </Motion.div>
-        </div>
-      </section>
-
-      {/* Demo preview */}
-      <section className="px-6 pb-24">
-        <div className="max-w-5xl mx-auto">
-          <Motion.div
-            initial={{ opacity: 0, y: 60 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-            viewport={{ once: true }}
-            className="glass-card p-4 sm:p-6"
-          >
-            <div className="bg-[var(--bg-input)] rounded-xl p-6 border border-[var(--border-subtle)]">
-              <div className="flex items-center gap-4 mb-6">
-                <div className="flex gap-1.5">
-                  <div className="w-3 h-3 rounded-full bg-red-400/80" />
-                  <div className="w-3 h-3 rounded-full bg-amber-400/80" />
-                  <div className="w-3 h-3 rounded-full bg-emerald-400/80" />
+              <span className="flex items-center gap-2 text-xs font-mono text-[var(--text-secondary)]">
+                <span className="accent-dot" /> 0.8 s
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-px rounded-lg overflow-hidden border border-[var(--border-subtle)] bg-[var(--border-subtle)] mb-5">
+              {[
+                ["42", "Verified"],
+                ["2", "To review"],
+                ["1", "Absent"],
+              ].map(([v, l]) => (
+                <div key={l} className="bg-[var(--bg-card)] p-4">
+                  <p className={`font-display text-4xl leading-none ${l === "Verified" ? "text-[var(--color-primary)]" : ""}`}>{v}</p>
+                  <p className="eyebrow mt-2">{l}</p>
                 </div>
-                <div className="flex-1 h-8 bg-[var(--bg-card)] rounded-lg border border-[var(--border-subtle)] flex items-center px-3">
-                  <span className="text-xs text-[var(--text-muted)]">
-                    dashboard.attendai.app
+              ))}
+            </div>
+            <div className="rounded-lg border border-[var(--border-subtle)] overflow-hidden">
+              {[
+                ["2300320100107", "Verified", "0.91"],
+                ["2300320100091", "Verified", "0.88"],
+                ["2300320100081", "Verified", "0.86"],
+                ["Unrecognised face", "Needs review", "0.62"],
+              ].map(([who, status, score]) => (
+                <div key={who} className="flex items-center justify-between gap-3 px-3 sm:px-4 py-3 border-b last:border-b-0 border-[var(--border-subtle)] bg-[var(--bg-card)]">
+                  <span className="font-mono text-xs text-[var(--text-secondary)] truncate min-w-0">{who}</span>
+                  <span className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                    <span className="font-mono text-xs text-[var(--text-muted)]">{score}</span>
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded whitespace-nowrap ${
+                        status === "Verified"
+                          ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                          : "border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {status}
+                    </span>
                   </span>
                 </div>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-4">
-                {/* Left: image placeholder */}
-                <div className="aspect-[4/3] bg-[var(--bg-card)] rounded-lg border border-[var(--border-subtle)] flex items-center justify-center">
-                  <div className="text-center">
-                    <FiCamera className="text-4xl text-[var(--text-muted)] mx-auto mb-2" />
-                    <p className="text-sm text-[var(--text-muted)]">
-                      Upload class photo
-                    </p>
-                  </div>
-                </div>
-
-                {/* Right: results */}
-                <div className="space-y-3">
-                  {[
-                    "Alex Johnson",
-                    "Maria Garcia",
-                    "James Chen",
-                    "Sarah Williams",
-                  ].map((name, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center gap-3 p-3 bg-[var(--bg-card)] rounded-lg border border-[var(--border-subtle)]"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-[var(--color-primary)]/20 flex items-center justify-center text-[var(--color-primary)] text-sm font-medium">
-                        {name.charAt(0)}
-                      </div>
-                      <span className="flex-1 text-sm font-medium text-[var(--text-main)]">
-                        {name}
-                      </span>
-                      <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                        <FiCheck className="text-emerald-500 text-sm" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              ))}
             </div>
           </Motion.div>
         </div>
       </section>
 
-      {/* Features */}
-      <section className="py-24 px-6 bg-[var(--bg-card)]/50">
-        <div className="max-w-6xl mx-auto">
-          <Motion.div
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.6 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl sm:text-4xl font-bold text-[var(--text-main)] mb-4">
-              Built for real classrooms
-            </h2>
-            <p className="text-[var(--text-secondary)] max-w-lg mx-auto">
-              No complex setup. No expensive hardware. Just a camera and your
-              students.
-            </p>
-          </Motion.div>
+      {/* Fact strip */}
+      <section className="px-6">
+        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 border-y border-[var(--border-subtle)]">
+          {[
+            ["~1 s", "recognition per photograph"],
+            ["512-d", "ArcFace face embeddings"],
+            ["75%", "eligibility threshold built in"],
+            ["0", "records saved without review"],
+          ].map(([v, l], i) => (
+            <div key={l} className={`py-8 px-2 md:px-6 ${i > 0 ? "md:border-l border-[var(--border-subtle)]" : ""}`}>
+              <p className="font-display text-5xl leading-none text-[var(--text-main)]">{v}</p>
+              <p className="text-sm text-[var(--text-muted)] mt-3">{l}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[
-              {
-                icon: FiZap,
-                title: "Instant Recognition",
-                desc: "Upload a photo and get attendance marked in seconds. No manual entry needed.",
-              },
-              {
-                icon: FiLayers,
-                title: "Multi-Classroom",
-                desc: "Organize students by class, section, or subject. Each with its own attendance history.",
-              },
-              {
-                icon: FiClock,
-                title: "Save Hours Weekly",
-                desc: "Replace 15-minute roll calls with a single photo. Time better spent teaching.",
-              },
-              {
-                icon: FiShield,
-                title: "Privacy First",
-                desc: "Face data stays on your account. No sharing with third parties. Ever.",
-              },
-              {
-                icon: FiBarChart2,
-                title: "Attendance Records",
-                desc: "View history, edit records, and track participation patterns over time.",
-              },
-              {
-                icon: FiUsers,
-                title: "Easy Enrollment",
-                desc: "Add students with a single photo. The system learns to recognize them automatically.",
-              },
-            ].map((feature, i) => (
+      {/* Capabilities */}
+      <section id="capabilities" className="py-28 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid lg:grid-cols-[0.8fr_1.2fr] gap-10 mb-14">
+            <div>
+              <p className="eyebrow mb-4">Capabilities</p>
+              <h2 className="font-display text-5xl leading-[1.02] text-[var(--text-main)]">
+                Built around how faculty actually take attendance.
+              </h2>
+            </div>
+            <p className="text-[var(--text-secondary)] leading-relaxed self-end max-w-lg">
+              Recognition does the repetitive work; the instructor makes the decisions.
+              Every screen is designed so that a full class can be recorded and verified
+              in under a minute.
+            </p>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 border-t border-l border-[var(--border-subtle)]">
+            {CAPABILITIES.map((c, i) => (
               <Motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
+                key={c.title}
+                initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
+                transition={{ duration: 0.5, delay: i * 0.05, ease: EASE }}
                 viewport={{ once: true }}
-                className="p-6 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--color-primary)]/30 transition-colors"
+                className="p-8 border-r border-b border-[var(--border-subtle)] bg-[var(--bg-card)]/60 hover:bg-[var(--bg-card)] transition-colors"
               >
-                <div className="w-10 h-10 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center text-[var(--color-primary)] mb-4">
-                  <feature.icon size={20} />
-                </div>
-                <h3 className="font-semibold text-[var(--text-main)] mb-2">
-                  {feature.title}
-                </h3>
-                <p className="text-sm text-[var(--text-muted)] leading-relaxed">
-                  {feature.desc}
-                </p>
+                <p className="font-mono text-xs text-[var(--text-muted)] mb-6">{String(i + 1).padStart(2, "0")}</p>
+                <h3 className="text-lg font-semibold text-[var(--text-main)] mb-2">{c.title}</h3>
+                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{c.desc}</p>
               </Motion.div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* How it works */}
-      <section id="how-it-works" className="py-24 px-6">
-        <div className="max-w-4xl mx-auto">
-          <Motion.div
-            initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.6 }}
-            viewport={{ once: true }}
-            className="text-center mb-16"
-          >
-            <h2 className="text-3xl sm:text-4xl font-bold text-[var(--text-main)] mb-4">
-              Three steps. That&apos;s it.
-            </h2>
-          </Motion.div>
-
-          <div className="space-y-12">
-            {[
-              {
-                step: "01",
-                title: "Create a classroom",
-                desc: "Name it, add a description if you want. Takes about 10 seconds.",
-              },
-              {
-                step: "02",
-                title: "Enroll your students",
-                desc: "Upload a photo of each student. The AI learns their face automatically.",
-              },
-              {
-                step: "03",
-                title: "Snap and done",
-                desc: "Take a group photo. The system marks who's present. Attendance complete.",
-              },
-            ].map((item, i) => (
-              <Motion.div
-                key={i}
-                initial={{ opacity: 0, x: -30 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.6, delay: i * 0.15 }}
-                viewport={{ once: true }}
-                className="flex gap-6 items-start"
-              >
-                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center text-[var(--color-primary)] font-bold text-sm">
-                  {item.step}
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-[var(--text-main)] mb-2">
-                    {item.title}
-                  </h3>
-                  <p className="text-[var(--text-secondary)]">{item.desc}</p>
-                </div>
-              </Motion.div>
+      {/* Workflow */}
+      <section id="workflow" className="pb-28 px-6">
+        <div className="max-w-6xl mx-auto">
+          <p className="eyebrow mb-4">Workflow</p>
+          <h2 className="font-display text-5xl leading-none text-[var(--text-main)] mb-14">From roll call to report.</h2>
+          <div className="grid md:grid-cols-4 gap-8">
+            {WORKFLOW.map(([title, desc], i) => (
+              <div key={title} className="border-t-2 border-[var(--text-main)] pt-5">
+                <p className="font-mono text-xs text-[var(--text-muted)] mb-3">Step {i + 1}</p>
+                <h3 className="font-display text-3xl text-[var(--text-main)] mb-3">{title}</h3>
+                <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{desc}</p>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
       {/* Call to action */}
-      <section className="py-20 px-6">
-        <div className="max-w-2xl mx-auto text-center">
-          <Motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            viewport={{ once: true }}
-            className="glass-card p-10 sm:p-12"
-          >
-            <h2 className="text-2xl sm:text-3xl font-bold text-[var(--text-main)] mb-4">
-              Ready to save time?
-            </h2>
-            <p className="text-[var(--text-secondary)] mb-8">
-              Join educators who have simplified their attendance workflow.
+      <section className="px-6 pb-24">
+        <div className="surface-ink max-w-6xl mx-auto rounded-2xl bg-[var(--bg-sidebar)] px-8 py-14 sm:px-14 flex flex-col md:flex-row md:items-end justify-between gap-8">
+          <div>
+            <p className="eyebrow mb-4 flex items-center gap-2">
+              <span className="accent-dot" /> Ready for your next lecture
             </p>
-            <Link
-              to="/login?register=true"
-              className="btn-primary px-8 py-4 rounded-xl text-base inline-flex items-center gap-2 group"
-            >
-              Create free account
-              <FiArrowRight className="group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </Motion.div>
+            <h2 className="font-display text-5xl sm:text-6xl leading-none">
+              Set up a classroom
+              <br />
+              <span className="italic text-[var(--color-primary)]">in five minutes.</span>
+            </h2>
+          </div>
+          <Link to="/login?register=true" className="btn-primary px-6 py-3.5 rounded-md inline-flex items-center gap-2 self-start md:self-auto">
+            Create faculty workspace <FiArrowUpRight />
+          </Link>
         </div>
       </section>
 
@@ -357,16 +260,12 @@ export default function LandingPage({ isDark, setIsDark }) {
       <footer className="py-8 px-6 border-t border-[var(--border-subtle)]">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-md bg-[var(--color-primary)] flex items-center justify-center">
-              <FiCamera className="text-[var(--color-primary-text)] text-sm" />
+            <div className="h-6 w-6 rounded bg-[var(--color-primary)] flex items-center justify-center">
+              <FiCamera className="text-[var(--color-primary-text)] text-xs" />
             </div>
-            <span className="font-semibold text-[var(--text-main)]">
-              SnapTick
-            </span>
+            <span className="font-semibold text-sm text-[var(--text-main)]">SnapTick</span>
           </div>
-          <p className="text-sm text-[var(--text-muted)]">
-            Face recognition attendance for modern classrooms.
-          </p>
+          <p className="eyebrow">On-premise face recognition · Faculty-verified records</p>
         </div>
       </footer>
     </div>

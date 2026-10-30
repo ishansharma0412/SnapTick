@@ -11,9 +11,12 @@ const ManualAttendance = () => {
   const { token, getAuthHeaders } = useAuth();
   const toast = useToast();
   const [studentListWithStatus, setStudentListWithStatus] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(
-    () => new Date().toISOString().split("T")[0],
-  );
+  // Local date (toISOString is UTC and shows yesterday before 5:30 AM IST)
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  });
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -131,7 +134,7 @@ const ManualAttendance = () => {
         </div>
       </div>
 
-      <div className="glass-card p-8">
+      <div className="glass-card p-4 sm:p-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
           <div className="relative w-full md:w-auto">
             <FiCalendar className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -154,10 +157,10 @@ const ManualAttendance = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-12 gap-4 px-4 py-3 rounded-xl bg-[var(--bg-input)] text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2 border border-[var(--border-subtle)]">
-          <div className="col-span-5 md:col-span-4">Student</div>
-          <div className="col-span-4 md:col-span-3">Roll ID</div>
-          <div className="col-span-3 md:col-span-3 text-center">Status</div>
+        <div className="grid grid-cols-12 gap-2 sm:gap-4 px-3 sm:px-4 py-3 rounded-xl bg-[var(--bg-input)] text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider mb-2 border border-[var(--border-subtle)]">
+          <div className="col-span-8 md:col-span-4">Student</div>
+          <div className="hidden md:block md:col-span-3">Roll No.</div>
+          <div className="col-span-4 md:col-span-3 text-center">Status</div>
           <div className="hidden md:block md:col-span-2 text-right">Action</div>
         </div>
 
@@ -180,24 +183,27 @@ const ManualAttendance = () => {
                   layout
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className={`grid grid-cols-12 gap-4 p-4 rounded-xl items-center border transition-all duration-200 ${
+                  className={`grid grid-cols-12 gap-2 sm:gap-4 p-3 sm:p-4 rounded-xl items-center border transition-all duration-200 ${
                     student.isPresent
                       ? "bg-[var(--status-present-bg)] border-[var(--status-present-bg)] bg-opacity-10"
                       : "bg-[var(--bg-input)] border-transparent"
                   }`}
                 >
-                  <div className="col-span-5 md:col-span-4 font-bold text-[var(--text-main)] flex items-center gap-3">
+                  <div className="col-span-8 md:col-span-4 font-semibold text-[var(--text-main)] flex items-center gap-3 min-w-0">
                     <div
-                      className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-[var(--color-primary-text)] ${student.isPresent ? "bg-[var(--color-primary)]" : "bg-[var(--border-subtle)]"}`}
+                      className={`w-9 h-9 flex-shrink-0 rounded-full flex items-center justify-center text-xs font-bold ${student.isPresent ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--border-subtle)] text-[var(--text-secondary)]"}`}
                     >
-                      {student.name.charAt(0)}
+                      {student.name.charAt(0).toUpperCase()}
                     </div>
-                    <span className="truncate">{student.name}</span>
+                    <div className="min-w-0">
+                      <p className="truncate">{student.name}</p>
+                      <p className="md:hidden font-mono text-[11px] text-[var(--text-muted)] truncate">{student.rollNumber}</p>
+                    </div>
                   </div>
-                  <div className="col-span-4 md:col-span-3 text-[var(--text-secondary)] text-sm font-semibold">
+                  <div className="hidden md:block md:col-span-3 font-mono text-[var(--text-secondary)] text-sm">
                     {student.rollNumber}
                   </div>
-                  <div className="col-span-3 md:col-span-3 flex justify-center">
+                  <div className="col-span-4 md:col-span-3 flex justify-center">
                     <button
                       onClick={() => toggleAttendance(student)}
                       className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all ${

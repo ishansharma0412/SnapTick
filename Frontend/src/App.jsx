@@ -13,7 +13,8 @@ import {
 } from "react-icons/fi";
 import { AnimatePresence, motion as Motion } from "framer-motion";
 import { useAuth } from "./context/AuthContext";
-import { ClassroomProvider } from "./context/ClassroomContext";
+import useServiceHealth from "./utils/useServiceHealth";
+import { ClassroomProvider, useClassroom } from "./context/ClassroomContext";
 import { ToastProvider } from "./context/ToastContext";
 import LandingPage from "./Components/LandingPage";
 import LoginPage from "./Components/LoginPage";
@@ -22,6 +23,7 @@ import ClassroomView from "./Components/ClassroomView";
 import EnrollForm from "./Components/EnrollForm";
 import AttendanceUploader from "./Components/AttendanceUploader";
 import ManualAttendance from "./Components/ManualAttendance";
+import Reports from "./Components/Reports";
 
 // Protected route wrapper
 function ProtectedRoute({ children }) {
@@ -29,7 +31,7 @@ function ProtectedRoute({ children }) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-app)]">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-[var(--text-muted)]">Loading...</p>
@@ -52,6 +54,8 @@ function DashboardLayout({ children, isDark, setIsDark }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const { teacher, logout } = useAuth();
+  const { classrooms } = useClassroom();
+  const health = useServiceHealth();
   const settingsRef = useRef(null);
 
   // Close settings menu on outside click
@@ -70,16 +74,14 @@ function DashboardLayout({ children, isDark, setIsDark }) {
       {/* Brand block */}
       <div className="mb-6 flex items-center justify-between px-2">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-[var(--color-primary)] flex items-center justify-center shadow-lg text-[var(--color-primary-text)]">
+          <div className="h-9 w-9 rounded-[10px] bg-[var(--accent)] flex items-center justify-center text-[var(--accent-ink)] shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_4px_12px_-4px_rgba(120,160,0,0.6)]">
             <FiCamera className="text-xl" />
           </div>
           <div>
-            <h1 className="font-bold text-xl tracking-tight text-[var(--text-main)]">
+            <h1 className="font-bold text-lg tracking-tight text-[var(--text-main)] leading-tight">
               SnapTick
             </h1>
-            <p className="text-xs font-semibold text-[var(--text-muted)] tracking-wider uppercase">
-              Dashboard
-            </p>
+            <p className="eyebrow !text-[10px]">Attendance Intelligence</p>
           </div>
         </div>
       </div>
@@ -88,7 +90,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
       <div className="mb-6 px-2">
         <button
           onClick={() => setProfileOpen(true)}
-          className="w-full rounded-xl bg-[var(--bg-input)] p-3 border border-[var(--border-subtle)] hover:border-[var(--color-primary)] transition-colors text-left group"
+          className="w-full rounded-xl bg-[var(--glass-bg)] p-3 border border-[var(--glass-border)] shadow-[inset_0_1px_0_var(--glass-highlight)] hover:border-[var(--text-muted)] transition-colors text-left group"
         >
           <div className="flex items-center gap-3">
             <div className="h-8 w-8 rounded-full bg-[var(--color-primary)]/20 flex items-center justify-center">
@@ -123,11 +125,40 @@ function DashboardLayout({ children, isDark, setIsDark }) {
           >
             <FiHome />
           </span>
-          My Classrooms
-          {location.pathname === "/dashboard" && (
-            <div className="ml-auto h-2 w-2 rounded-full bg-[var(--color-primary)]" />
-          )}
+          Overview
         </Link>
+
+        {classrooms.length > 0 && (
+          <div className="pt-4">
+            <p className="eyebrow px-5 pb-2">Classrooms</p>
+            <div className="space-y-1 max-h-64 overflow-y-auto">
+              {classrooms.slice(0, 8).map((c) => {
+                const active = location.pathname.startsWith(`/classroom/${c._id}`);
+                return (
+                  <Link
+                    key={c._id}
+                    to={`/classroom/${c._id}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 rounded-xl px-5 py-2.5 text-sm font-medium transition-colors ${
+                      active
+                        ? "bg-[var(--nav-active-bg)] text-[var(--nav-active-text)]"
+                        : "text-[var(--text-secondary)] hover:text-[var(--text-main)] hover:bg-[var(--bg-input)]"
+                    }`}
+                  >
+                    <span
+                      className={`h-6 w-6 rounded-md flex items-center justify-center text-[11px] font-bold ${
+                        active ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]" : "bg-[var(--bg-input)] text-[var(--text-muted)] border border-[var(--border-subtle)]"
+                      }`}
+                    >
+                      {c.name.trim().charAt(0).toUpperCase()}
+                    </span>
+                    <span className="truncate">{c.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* Sidebar footer and settings */}
@@ -139,7 +170,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
             className={`w-full flex items-center justify-between p-3 rounded-xl border transition-colors ${
               settingsOpen
                 ? "bg-[var(--color-primary)]/10 border-[var(--color-primary)] text-[var(--color-primary)]"
-                : "bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-main)]"
+                : "bg-[var(--glass-bg)] border-[var(--glass-border)] text-[var(--text-secondary)] hover:text-[var(--text-main)]"
             }`}
           >
             <span className="text-sm font-medium flex items-center gap-2">
@@ -212,15 +243,25 @@ function DashboardLayout({ children, isDark, setIsDark }) {
           </AnimatePresence>
         </div>
 
-        <div className="rounded-2xl bg-[var(--bg-card)] p-4 border border-[var(--border-subtle)]">
+        <div className="rounded-xl bg-[var(--glass-bg)] p-4 border border-[var(--glass-border)] shadow-[inset_0_1px_0_var(--glass-highlight)]">
           <div className="flex items-center gap-2 mb-1">
-            <div className="h-2 w-2 rounded-full bg-[var(--system-online)] animate-pulse" />
-            <span className="text-xs font-bold text-[var(--text-main)]">
-              System Online
+            {health.ready ? (
+              <span className="accent-dot" />
+            ) : (
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+            )}
+            <span className="text-xs font-semibold text-[var(--text-main)]">
+              {health.ready
+                ? "All systems online"
+                : health.api !== "ok"
+                  ? "Connecting to server…"
+                  : health.database !== "ok"
+                    ? "Database reconnecting…"
+                    : "Recognition engine waking up…"}
             </span>
           </div>
-          <p className="text-xs text-[var(--text-muted)]">
-            Biometric engine ready.
+          <p className="text-[11px] font-mono text-[var(--text-muted)]">
+            {health.ready ? "InsightFace buffalo_l · ONNX" : "This can take up to a minute"}
           </p>
         </div>
       </div>
@@ -315,27 +356,28 @@ function DashboardLayout({ children, isDark, setIsDark }) {
   );
 
   return (
-    <div className="flex min-h-screen relative overflow-hidden bg-[var(--bg-app)] transition-colors duration-300">
+    <div className="flex min-h-screen relative overflow-hidden transition-colors duration-300">
       {/* Profile modal */}
       <AnimatePresence>{profileOpen && <ProfileModal />}</AnimatePresence>
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-80 flex-col p-6 fixed h-full z-20">
-        <div className="h-full glass-card p-6 bg-[var(--bg-sidebar)]">
+      <aside className="hidden lg:flex print:!hidden w-80 flex-col p-6 fixed h-full z-20">
+        <div className="glass-panel h-full rounded-[22px] p-5">
           <SidebarContent />
         </div>
       </aside>
 
       {/* Mobile header */}
-      <div className="lg:hidden fixed top-0 w-full z-30 flex items-center justify-between p-4 bg-[var(--bg-sidebar)] border-b border-[var(--border-subtle)]">
+      <div className="glass-panel lg:hidden print:hidden fixed top-0 w-full z-30 flex items-center justify-between p-4 !rounded-none">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-[var(--color-primary)] flex items-center justify-center text-[var(--color-primary-text)]">
+          <div className="h-8 w-8 rounded-lg bg-[var(--accent)] flex items-center justify-center text-[var(--accent-ink)]">
             <FiCamera />
           </div>
           <span className="font-bold text-[var(--text-main)]">SnapTick</span>
         </div>
         <button
           onClick={() => setMobileMenuOpen(true)}
+          aria-label="Open menu"
           className="p-2 text-[var(--text-main)]"
         >
           <FiMenu size={24} />
@@ -349,7 +391,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm lg:hidden"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm lg:hidden"
             onClick={() => setMobileMenuOpen(false)}
           >
             <Motion.div
@@ -357,7 +399,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               onClick={(e) => e.stopPropagation()}
-              className="absolute left-0 top-0 h-full w-80 bg-[var(--bg-sidebar)] shadow-2xl p-6"
+              className="absolute left-0 top-0 h-full w-[86vw] max-w-80 p-5 bg-[var(--bg-card)] border-r border-[var(--border-subtle)] shadow-2xl overflow-y-auto"
             >
               <SidebarContent />
             </Motion.div>
@@ -365,7 +407,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 lg:ml-80 pt-20 lg:pt-0 relative z-10">
+      <main className="flex-1 min-w-0 lg:ml-80 print:!ml-0 pt-20 lg:pt-0 print:pt-0 relative">
         <div className="p-6 lg:p-12 max-w-7xl mx-auto">{children}</div>
       </main>
     </div>
@@ -392,7 +434,7 @@ function App() {
   // Show loading spinner while auth state resolves
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-app)]">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-[var(--text-muted)]">Loading...</p>
@@ -453,6 +495,7 @@ function App() {
             <Route index element={<EnrollForm />} />
             <Route path="attendance" element={<AttendanceUploader />} />
             <Route path="records" element={<ManualAttendance />} />
+            <Route path="reports" element={<Reports />} />
           </Route>
 
           {/* Fallback: redirect to dashboard or landing */}

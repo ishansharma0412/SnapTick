@@ -9,6 +9,9 @@ const Attendance = require("../models/attendance");
 const Student = require("../models/student");
 const Classroom = require("../models/classroom");
 const { authMiddleware } = require("./auth");
+const crypto = require("crypto");
+const mongoose = require("mongoose");
+const { savePhoto } = require("../storage/photos");
 
 // Use absolute path for uploads directory
 const UPLOADS_DIR = path.join(__dirname, '../uploads');
@@ -20,7 +23,8 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+    // Random names: scan images are served publicly for a short time and must not be guessable
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString("hex") + (path.extname(file.originalname) || ".jpg").toLowerCase()),
 });
 const upload = multer({
     storage,
@@ -59,7 +63,7 @@ function cleanupOldMarkedImages(maxAgeMinutes = 30) {
         let deletedCount = 0;
 
         for (const file of files) {
-            if (file.startsWith("marked-")) {
+            if (file.startsWith("marked-") || file.startsWith("facecrop-")) {
                 const filePath = path.join(UPLOADS_DIR, file);
                 const stats = fs.statSync(filePath);
                 const ageMinutes = (now - stats.mtimeMs) / (1000 * 60);
@@ -114,13 +118,8 @@ async function matchFaces(imagePath, enrolledFaces) {
         });
     }
 
-    const response = await fetch(`${DEEPFACE_SERVICE_URL}/match-faces`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: requestBody
-    });
-
-    const data = await response.json();
+    const response = await callFaceService("/match-faces", requestBody);
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
         console.error(`[DeepFace] Error response:`, data);
@@ -131,11 +130,53 @@ async function matchFaces(imagePath, enrolledFaces) {
 }
 
 /**
+ * POST JSON to the face service with a timeout. The service may be asleep on
+ * free hosting, so connection failures get a message the teacher can act on.
+ */
+async function callFaceService(endpoint, body) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    try {
+        return await fetch(`${DEEPFACE_SERVICE_URL}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            signal: controller.signal,
+        });
+    } catch (err) {
+        if (err.name === "AbortError") {
+            throw new Error("Face recognition took too long. Please try again with a smaller photo.");
+        }
+        throw new Error("The face recognition service is starting up. Please try again in a minute.");
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/** Parse "YYYY-MM-DD" as a local calendar day (independent of the server's UTC parsing). */
+function parseDay(value) {
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const [y, m, d] = value.split("-").map(Number);
+        return new Date(y, m - 1, d);
+    }
+    const d = new Date(value);
+    return isNaN(d) ? null : d;
+}
+
+/** Delete a file, ignoring errors (it may already have been removed). */
+function safeUnlink(filePath) {
+    fs.promises.unlink(filePath).catch(() => {});
+}
+
+/**
  * Validate classroom ownership.
  */
 async function verifyClassroom(classroomId, teacherId) {
     if (!classroomId) {
         return { valid: false, error: "classroomId is required" };
+    }
+    if (!mongoose.Types.ObjectId.isValid(classroomId)) {
+        return { valid: false, error: "Invalid classroom id" };
     }
 
     const classroom = await Classroom.findById(classroomId);
@@ -203,7 +244,7 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
             matchResult = await matchFaces(absoluteImagePath, enrolledFaces);
         } catch (error) {
             if (fs.existsSync(absoluteImagePath)) fs.unlinkSync(absoluteImagePath);
-            return res.status(500).json({ error: error.message || "Failed to process faces" });
+            return res.status(503).json({ error: error.message || "Failed to process faces" });
         }
 
         // Load image for bounding boxes
@@ -215,6 +256,22 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
         const studentMap = new Map(
             students.map((student) => [student.rollNumber, student])
         );
+
+        // Save a padded crop of every face so the teacher can see who was (not) recognized
+        const cropBase = path.parse(req.file.filename).name;
+        const saveFaceCrop = (box, index) => {
+            const pad = Math.round(Math.max(box.width, box.height) * 0.4);
+            const sx = Math.max(0, box.x - pad);
+            const sy = Math.max(0, box.y - pad);
+            const sw = Math.min(groupImg.width - sx, box.width + pad * 2);
+            const sh = Math.min(groupImg.height - sy, box.height + pad * 2);
+            const scale = Math.min(1, 256 / Math.max(sw, sh));
+            const cropCanvas = createCanvas(Math.max(1, Math.round(sw * scale)), Math.max(1, Math.round(sh * scale)));
+            cropCanvas.getContext("2d").drawImage(groupImg, sx, sy, sw, sh, 0, 0, cropCanvas.width, cropCanvas.height);
+            const fileName = `facecrop-${cropBase}-${index}.jpg`;
+            fs.writeFileSync(path.join(UPLOADS_DIR, fileName), cropCanvas.toBuffer("image/jpeg", { quality: 0.9 }));
+            return fileName;
+        };
 
         // Build detection results
         const detections = [];
@@ -230,6 +287,7 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
                 height: facial_area.h || 100
             };
 
+            const faceImage = saveFaceCrop(box, i);
             const isRecognized = match.is_recognized;
             const rollNumber = match.roll_number;
             const student = isRecognized ? studentMap.get(rollNumber) : null;
@@ -255,9 +313,11 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
             ctx.fillStyle = "#ffffff";
             ctx.fillText(label, labelX + padding, labelY + fontSize + (padding / 2));
 
-            // Derive confidence from distance (lower distance = higher confidence).
-            // Distance ~0 => 100%, ~0.8+ => 0%.
-            const confidence = Math.max(0, Math.min(100, Math.round((1 - match.distance / 0.8) * 100)));
+            // Confidence comes from the face service (calibrated to its model);
+            // fall back to a distance-based estimate for older services.
+            const confidence = typeof match.confidence === "number"
+                ? match.confidence
+                : Math.max(0, Math.min(100, Math.round((1 - match.distance / 0.8) * 100)));
 
             // Add detection result
             detections.push({
@@ -271,6 +331,8 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
                     confidence: confidence,
                     status: isRecognized ? "matched" : "unknown"
                 },
+                faceImage,
+                faceImageUrl: `${BASE_URL}/uploads/${faceImage}`,
                 embedding: match.embedding // Include embedding for corrections
             });
         }
@@ -287,12 +349,7 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
         }
 
         // Schedule cleanup of marked image after 10 minutes
-        setTimeout(() => {
-            if (fs.existsSync(newImageSavePath)) {
-                fs.unlinkSync(newImageSavePath);
-                console.log(`[Cleanup] Deleted marked image: ${newImageName}`);
-            }
-        }, 10 * 60 * 1000);
+        setTimeout(() => safeUnlink(newImageSavePath), 10 * 60 * 1000);
 
         // Prepare enrolled students for correction dropdown
         const enrolledStudents = students.map(s => ({
@@ -301,10 +358,21 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
             rollNumber: s.rollNumber
         }));
 
+        // Students already marked present today (manual or earlier scan)
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+        const todayRecords = await Attendance.find(
+            { classroomId, teacherId, date: { $gte: todayStart, $lte: todayEnd } },
+            "rollNo"
+        ).lean();
+
         res.json({
             success: true,
             reviewMode: true,
             detections,
+            alreadyPresent: todayRecords.map((r) => r.rollNo),
             markedImageUrl: `${BASE_URL}/uploads/${newImageName}`,
             faceCount: matchResult.face_count,
             recognizedCount: matchResult.recognized_count,
@@ -334,13 +402,13 @@ router.post("/upload", authMiddleware, upload.single("groupPhoto"), async (req, 
 router.post("/confirm", authMiddleware, async (req, res) => {
     try {
         const teacherId = req.teacher.id;
-        const { classroomId, confirmations } = req.body;
+        const { classroomId, confirmations, manualStudentIds = [] } = req.body;
 
         if (!classroomId) {
             return res.status(400).json({ error: "classroomId is required" });
         }
 
-        if (!confirmations || !Array.isArray(confirmations)) {
+        if (!confirmations || !Array.isArray(confirmations) || !Array.isArray(manualStudentIds)) {
             return res.status(400).json({ error: "confirmations array is required" });
         }
 
@@ -368,10 +436,17 @@ router.post("/confirm", authMiddleware, async (req, res) => {
 
         // Process confirmations
         const markedStudents = [];
+        const alreadyPresentStudents = [];
         let trainedCount = 0;
         const uniqueRollNumbers = new Set();
 
-        for (const confirmation of confirmations) {
+        // Students the teacher marked present by hand (not visible in the photo)
+        const allConfirmations = [
+            ...confirmations,
+            ...manualStudentIds.map((studentId) => ({ studentId, action: "manual", addToTraining: false })),
+        ];
+
+        for (const confirmation of allConfirmations) {
             const { faceIndex, studentId, action, addToTraining, embedding } = confirmation;
 
             // Skip faces marked as not enrolled
@@ -392,7 +467,10 @@ router.post("/confirm", authMiddleware, async (req, res) => {
             }
 
             // Mark attendance (dedupe)
-            if (!uniqueRollNumbers.has(student.rollNumber) && !existingRollNumbers.has(student.rollNumber)) {
+            if (existingRollNumbers.has(student.rollNumber) && !uniqueRollNumbers.has(student.rollNumber)) {
+                alreadyPresentStudents.push({ studentName: student.name, rollNo: student.rollNumber });
+                uniqueRollNumbers.add(student.rollNumber);
+            } else if (!uniqueRollNumbers.has(student.rollNumber)) {
                 try {
                     await Attendance.create({
                         studentName: student.name,
@@ -448,7 +526,10 @@ router.post("/confirm", authMiddleware, async (req, res) => {
             markedCount: markedStudents.length,
             trainedCount,
             markedStudents,
-            message: `Marked attendance for ${markedStudents.length} student(s)${trainedCount > 0 ? `, added ${trainedCount} training sample(s)` : ''}`
+            alreadyPresentStudents,
+            message: `Marked ${markedStudents.length} student(s) present` +
+                (alreadyPresentStudents.length ? `, ${alreadyPresentStudents.length} already present today` : "") +
+                (trainedCount > 0 ? ` · learned ${trainedCount} new face sample(s)` : "")
         });
 
     } catch (err) {
@@ -475,9 +556,11 @@ router.get("/", authMiddleware, async (req, res) => {
             return res.status(400).json({ error: classroomCheck.error });
         }
 
-        const startDate = new Date(date);
+        const day = parseDay(date);
+        if (!day) return res.status(400).json({ error: "Invalid date." });
+        const startDate = new Date(day);
         startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
+        const endDate = new Date(day);
         endDate.setHours(23, 59, 59, 999);
 
         const records = await Attendance.find({
@@ -489,6 +572,231 @@ router.get("/", authMiddleware, async (req, res) => {
     } catch (error) {
         console.error("Fetching attendance error:", error);
         res.status(500).json({ error: "Failed to fetch attendance records." });
+    }
+});
+
+// POST /attendance/enroll-face - enroll a new student from an unrecognized face in a scan (auth required)
+// Uses the face crop and embedding produced by /upload, so no new photo is needed.
+router.post("/enroll-face", authMiddleware, async (req, res) => {
+    try {
+        const teacherId = req.teacher.id;
+        const { classroomId, name, rollNumber, faceImage, embedding } = req.body;
+
+        if (!name?.trim() || !rollNumber?.trim()) {
+            return res.status(400).json({ error: "Name and roll number are required" });
+        }
+        if (!Array.isArray(embedding) || embedding.length === 0) {
+            return res.status(400).json({ error: "Face embedding is missing; scan the photo again" });
+        }
+        // Only accept crops written by /upload (no path traversal)
+        if (typeof faceImage !== "string" || !/^facecrop-[\w.-]+\.jpg$/.test(faceImage)) {
+            return res.status(400).json({ error: "Invalid face image" });
+        }
+        const cropPath = path.join(UPLOADS_DIR, faceImage);
+        if (!fs.existsSync(cropPath)) {
+            return res.status(410).json({ error: "This scan has expired; scan the photo again" });
+        }
+
+        const classroomCheck = await verifyClassroom(classroomId, teacherId);
+        if (!classroomCheck.valid) {
+            return res.status(400).json({ error: classroomCheck.error });
+        }
+
+        if (await Student.findOne({ rollNumber: rollNumber.trim(), classroomId })) {
+            return res.status(409).json({ error: "Roll number already exists in this classroom" });
+        }
+
+        const imageName = await savePhoto(await fs.promises.readFile(cropPath), { contentType: "image/jpeg", teacherId, classroomId });
+
+        const student = await Student.create({
+            name: name.trim(),
+            rollNumber: rollNumber.trim(),
+            image: imageName,
+            faceDescriptors: [embedding],
+            faceDescriptor: embedding,
+            descriptorCount: 1,
+            teacherId,
+            classroomId,
+        });
+
+        res.status(201).json({
+            message: "Student added",
+            student: { _id: student._id.toString(), name: student.name, rollNumber: student.rollNumber },
+        });
+    } catch (error) {
+        console.error("Enroll from face error:", error);
+        res.status(500).json({ error: "Failed to add student" });
+    }
+});
+
+// Minimum attendance percentage most colleges require (used for defaulter list)
+const ATTENDANCE_THRESHOLD = 75;
+
+// Local-date key (YYYY-MM-DD); attendance dates are stored at local midnight
+function dayKey(value) {
+    const d = new Date(value);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// GET /attendance/overview - today's attendance and 30-day average for every classroom of the teacher
+router.get("/overview", authMiddleware, async (req, res) => {
+    try {
+        const teacherId = req.teacher.id;
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const monthStart = new Date(todayStart.getTime() - 29 * 24 * 60 * 60 * 1000);
+
+        const classrooms = await Classroom.find({ teacherId }, { name: 1 }).lean();
+        const ids = classrooms.map((c) => c._id);
+        const [studentCounts, records] = await Promise.all([
+            Student.aggregate([{ $match: { classroomId: { $in: ids } } }, { $group: { _id: "$classroomId", n: { $sum: 1 } } }]),
+            Attendance.find({ classroomId: { $in: ids }, teacherId, date: { $gte: monthStart } }, { classroomId: 1, date: 1 }).lean(),
+        ]);
+        const countBy = new Map(studentCounts.map((c) => [c._id.toString(), c.n]));
+
+        const perClass = new Map(ids.map((id) => [id.toString(), { today: 0, byDay: new Map(), last: null }]));
+        for (const r of records) {
+            const entry = perClass.get(r.classroomId.toString());
+            const key = dayKey(r.date);
+            entry.byDay.set(key, (entry.byDay.get(key) || 0) + 1);
+            if (r.date >= todayStart) entry.today++;
+            if (!entry.last || r.date > entry.last) entry.last = r.date;
+        }
+
+        const round1 = (n) => Math.round(n * 10) / 10;
+        const rows = classrooms.map((c) => {
+            const id = c._id.toString();
+            const students = countBy.get(id) || 0;
+            const entry = perClass.get(id);
+            const sessions = entry.byDay.size;
+            const totalPresent = [...entry.byDay.values()].reduce((a, b) => a + b, 0);
+            return {
+                classroomId: id,
+                name: c.name,
+                students,
+                presentToday: entry.today,
+                takenToday: entry.today > 0,
+                sessions30d: sessions,
+                average30d: students && sessions ? round1(Math.min(100, (totalPresent / (students * sessions)) * 100)) : null,
+                lastTaken: entry.last ? dayKey(entry.last) : null,
+            };
+        });
+
+        const totalStudents = rows.reduce((a, r) => a + r.students, 0);
+        const presentToday = rows.reduce((a, r) => a + r.presentToday, 0);
+        const studentsInTakenClasses = rows.filter((r) => r.takenToday).reduce((a, r) => a + r.students, 0);
+        const averaged = rows.filter((r) => r.average30d !== null);
+
+        res.json({
+            totalClassrooms: rows.length,
+            totalStudents,
+            presentToday,
+            todayRate: studentsInTakenClasses ? round1((presentToday / studentsInTakenClasses) * 100) : null,
+            classesTakenToday: rows.filter((r) => r.takenToday).length,
+            average30d: averaged.length ? round1(averaged.reduce((a, r) => a + r.average30d, 0) / averaged.length) : null,
+            classrooms: rows,
+        });
+    } catch (error) {
+        console.error("Attendance overview error:", error);
+        res.status(500).json({ error: "Failed to load overview." });
+    }
+});
+
+// GET /attendance/report - per-student attendance summary for a date range (auth required)
+// A "session" is any day in the range on which attendance was taken for this classroom.
+router.get("/report", authMiddleware, async (req, res) => {
+    try {
+        const { classroomId, from, to } = req.query;
+        const teacherId = req.teacher.id;
+
+        const classroomCheck = await verifyClassroom(classroomId, teacherId);
+        if (!classroomCheck.valid) {
+            return res.status(400).json({ error: classroomCheck.error });
+        }
+
+        const endDate = to ? parseDay(to) : new Date();
+        const startDate = from ? parseDay(from) : endDate && new Date(endDate.getTime() - 29 * 24 * 60 * 60 * 1000);
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: "Invalid from/to date." });
+        }
+        startDate.setHours(0, 0, 0, 0);
+        endDate.setHours(23, 59, 59, 999);
+        if (startDate > endDate) {
+            return res.status(400).json({ error: "'from' must be before 'to'." });
+        }
+
+        const [students, records] = await Promise.all([
+            Student.find({ classroomId }, { name: 1, rollNumber: 1 }).sort({ rollNumber: 1 }).lean(),
+            Attendance.find(
+                { classroomId, teacherId, date: { $gte: startDate, $lte: endDate } },
+                { rollNo: 1, date: 1 }
+            ).lean(),
+        ]);
+
+        const enrolledRolls = new Set(students.map((s) => s.rollNumber));
+        const daysByRoll = new Map();
+        const presentByDay = new Map();
+        for (const record of records) {
+            const key = dayKey(record.date);
+            if (!presentByDay.has(key)) presentByDay.set(key, 0);
+            if (!enrolledRolls.has(record.rollNo)) continue; // student since removed
+            presentByDay.set(key, presentByDay.get(key) + 1);
+            if (!daysByRoll.has(record.rollNo)) daysByRoll.set(record.rollNo, new Set());
+            daysByRoll.get(record.rollNo).add(key);
+        }
+
+        const totalSessions = presentByDay.size;
+        const round1 = (n) => Math.round(n * 10) / 10;
+
+        const rows = students.map((s) => {
+            const present = daysByRoll.get(s.rollNumber)?.size || 0;
+            const percentage = totalSessions ? round1((present / totalSessions) * 100) : 0;
+            let status = "no-data";
+            if (totalSessions) {
+                if (percentage >= ATTENDANCE_THRESHOLD) status = "good";
+                else if (percentage >= ATTENDANCE_THRESHOLD - 15) status = "warning";
+                else status = "critical";
+            }
+            return {
+                studentId: s._id.toString(),
+                name: s.name,
+                rollNumber: s.rollNumber,
+                present,
+                absent: totalSessions - present,
+                percentage,
+                status,
+            };
+        });
+
+        const days = [...presentByDay.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([date, present]) => ({
+                date,
+                present,
+                total: students.length,
+                percentage: students.length ? round1((present / students.length) * 100) : 0,
+            }));
+
+        const classAverage = rows.length && totalSessions
+            ? round1(rows.reduce((sum, r) => sum + r.percentage, 0) / rows.length)
+            : 0;
+
+        res.json({
+            classroom: { id: classroomId, name: classroomCheck.classroom.name },
+            from: dayKey(startDate),
+            to: dayKey(endDate),
+            threshold: ATTENDANCE_THRESHOLD,
+            totalStudents: students.length,
+            totalSessions,
+            classAverage,
+            defaulterCount: rows.filter((r) => r.status === "warning" || r.status === "critical").length,
+            students: rows,
+            days,
+        });
+    } catch (error) {
+        console.error("Attendance report error:", error);
+        res.status(500).json({ error: "Failed to build attendance report." });
     }
 });
 
@@ -508,7 +816,8 @@ router.post("/mark", authMiddleware, async (req, res) => {
             return res.status(400).json({ error: classroomCheck.error });
         }
 
-        const specificDate = new Date(date);
+        const specificDate = parseDay(date);
+        if (!specificDate) return res.status(400).json({ error: "Invalid date." });
         const startDate = new Date(new Date(specificDate).setHours(0, 0, 0, 0));
         const endDate = new Date(new Date(specificDate).setHours(23, 59, 59, 999));
         const attendanceDate = new Date(startDate);
@@ -568,7 +877,8 @@ router.delete("/unmark", authMiddleware, async (req, res) => {
             return res.status(400).json({ error: classroomCheck.error });
         }
 
-        const specificDate = new Date(date);
+        const specificDate = parseDay(date);
+        if (!specificDate) return res.status(400).json({ error: "Invalid date." });
         const startDate = new Date(new Date(specificDate).setHours(0, 0, 0, 0));
         const endDate = new Date(new Date(specificDate).setHours(23, 59, 59, 999));
 
@@ -657,13 +967,15 @@ router.post("/diagnose", authMiddleware, upload.single("groupPhoto"), async (req
             });
         }
 
-        const response = await fetch(`${DEEPFACE_SERVICE_URL}/diagnose`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: requestBody
-        });
+        let response;
+        try {
+            response = await callFaceService("/diagnose", requestBody);
+        } catch (error) {
+            safeUnlink(absoluteImagePath);
+            return res.status(503).json({ error: error.message });
+        }
 
-        const diagnosisResult = await response.json();
+        const diagnosisResult = await response.json().catch(() => ({}));
 
         // Clean up uploaded image
         if (fs.existsSync(absoluteImagePath)) {

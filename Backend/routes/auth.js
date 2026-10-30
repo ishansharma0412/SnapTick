@@ -8,9 +8,20 @@ const router = express.Router();
 // JWT secret must be set via environment in production
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === "production") {
+    // A random fallback would log every teacher out on each restart; fail loudly instead
+    console.error("❌ JWT_SECRET is not set. Refusing to start in production.");
+    process.exit(1);
+  }
   console.error("⚠️  WARNING: JWT_SECRET not set in environment variables!");
   console.error("⚠️  Using insecure default - DO NOT use in production!");
 }
+
+// Optional: only allow registration with institutional emails, e.g. "abes.ac.in"
+const ALLOWED_EMAIL_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS || "")
+  .split(",")
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
 const SECURE_JWT_SECRET = JWT_SECRET || "dev-only-insecure-key-" + Math.random().toString(36);
 const JWT_EXPIRES_IN = "7d";
 
@@ -56,8 +67,19 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Name, email, and password are required" });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "Please enter a valid email address" });
+    }
+
+    if (ALLOWED_EMAIL_DOMAINS.length) {
+      const domain = email.split("@").pop().toLowerCase();
+      if (!ALLOWED_EMAIL_DOMAINS.includes(domain)) {
+        return res.status(403).json({ error: `Registration is limited to ${ALLOWED_EMAIL_DOMAINS.map((d) => "@" + d).join(", ")} email addresses` });
+      }
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ error: "Password must be at least 8 characters" });
     }
 
     // Check for existing email
@@ -155,6 +177,9 @@ router.get("/verify", authMiddleware, async (req, res) => {
 // GET /auth/teachers - list all teachers (admin only)
 router.get("/teachers", authMiddleware, async (req, res) => {
   try {
+    if (req.teacher.role !== "admin") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
     const teachers = await Teacher.find({}, "-password");
     res.status(200).json(teachers);
   } catch (error) {

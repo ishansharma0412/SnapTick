@@ -8,7 +8,7 @@ export function apiUrl(path) {
   return `${API_URL}${path.startsWith('/') ? path : '/' + path}`;
 }
 
-// Build upload URLs with optional cache busting
+// Build URLs for temporary scan images (annotated photo, face crops)
 export function uploadUrl(filename, bustCache = false) {
   const base = `${API_URL}/uploads/${filename}`;
   return bustCache ? `${base}?t=${Date.now()}` : base;

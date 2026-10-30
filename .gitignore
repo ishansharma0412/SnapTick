@@ -57,3 +57,9 @@ Backend/uploads/*.png
 
 # DeepFace cache
 .deepface/
+
+# Descriptor backups from scripts/reembed-all.js
+Backend/backups/
+deepface-hf/app.py
+deepface-hf/requirements.txt
+deepface-hf/Dockerfile

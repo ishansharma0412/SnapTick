@@ -1,7 +1,0 @@
-flask==3.0.0
-deepface==0.0.89
-numpy
-opencv-python-headless
-tf-keras
-pillow
-gunicorn

@@ -1,28 +1,34 @@
 ---
-title: SnapTick DeepFace API
+title: SnapTick Face Service
 emoji: 📸
-colorFrom: blue
+colorFrom: gray
 colorTo: green
 sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 ---
 
-# SnapTick DeepFace API
+# SnapTick face recognition service
 
-Face recognition service for the SnapTick Attendance System.
+InsightFace `buffalo_l` (SCRFD-10G detection + ArcFace R50, 512-d embeddings) on ONNX Runtime, CPU only.
 
 ## Endpoints
 
-- `GET /` - Service info
-- `GET /health` - Health check
-- `POST /extract-embedding` - Extract face embedding from image
-- `POST /match-faces` - Match faces in group photo against enrolled students
-- `POST /diagnose` - Diagnostic analysis for debugging
+- `GET /health` – service status
+- `POST /extract-embedding` – embedding of the main face in an enrolment photo
+- `POST /match-faces` – detect and match every face in a class photo against enrolled students
+- `POST /detect-faces`, `POST /verify`, `POST /diagnose`
 
-## Model Configuration
+Images are sent as `image_base64` when the service is hosted remotely.
 
-- **Recognition Model**: ArcFace (512-dim embeddings)
-- **Detector**: RetinaFace (5-point landmark alignment)
-- **Distance Metric**: Cosine similarity
-- **Match Threshold**: 0.60
+## Deploying this Space
+
+The Space is built from the files in `Backend/deepface_service/`. Run
+
+```bash
+./deepface-hf/sync.sh
+```
+
+from the repository root, then upload `README.md`, `Dockerfile`, `requirements.txt` and `app.py`
+from `deepface-hf/` to a new **Docker** Space. The model is downloaded during the image build.

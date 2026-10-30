@@ -7,6 +7,8 @@ const { authMiddleware } = require("./auth");
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
+const { savePhotoFromFile, readPhoto, deletePhoto } = require("../storage/photos");
 
 const router = express.Router();
 
@@ -20,7 +22,8 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+  // Random names: uploads are temporary and must not be guessable
+  filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString("hex") + (path.extname(file.originalname) || ".jpg").toLowerCase()),
 });
 
 // Max upload size
@@ -52,58 +55,60 @@ const DEEPFACE_SERVICE_URL = process.env.DEEPFACE_URL || "http://localhost:5001"
 // Detect remote DeepFace service (requires base64 images)
 const isRemoteDeepFace = !DEEPFACE_SERVICE_URL.includes("localhost") && !DEEPFACE_SERVICE_URL.includes("127.0.0.1");
 
-/**
- * Extract a face embedding via DeepFace.
- * Supports both local (file path) and remote (base64) modes.
- * @param {string} imagePath - Absolute path to the image file
- * @returns {Promise<{embedding: number[], facial_area: object}>}
- */
-async function extractFaceEmbedding(imagePath) {
-  // Ensure absolute path
-  const absolutePath = path.isAbsolute(imagePath) ? imagePath : path.join(UPLOADS_DIR, imagePath);
+// Face service may be asleep on free hosting; allow time for it to wake up.
+const FACE_SERVICE_TIMEOUT_MS = 90000;
 
-  console.log(`[DeepFace] Processing image: ${absolutePath} (remote: ${isRemoteDeepFace})`);
-
-  // Abort after 60 seconds to avoid hanging face processing
+/** POST an image to the face service's /extract-embedding endpoint. */
+async function callExtract(body) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-
+  const timeout = setTimeout(() => controller.abort(), FACE_SERVICE_TIMEOUT_MS);
   try {
-    let requestBody;
-
-    if (isRemoteDeepFace) {
-      // Remote service: send base64 image
-      const imageBuffer = fs.readFileSync(absolutePath);
-      const base64Image = imageBuffer.toString('base64');
-      requestBody = JSON.stringify({ image_base64: base64Image });
-    } else {
-      // Local service: send file path
-      requestBody = JSON.stringify({ image_path: absolutePath });
+    let response;
+    try {
+      response = await fetch(`${DEEPFACE_SERVICE_URL}/extract-embedding`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err.name === "AbortError") {
+        throw new Error("The face recognition service took too long to respond. Please try again.");
+      }
+      throw new Error("The face recognition service is starting up. Please try again in a minute.");
     }
-
-    const response = await fetch(`${DEEPFACE_SERVICE_URL}/extract-embedding`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: requestBody,
-      signal: controller.signal
-    });
-
-    const data = await response.json();
-
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      console.error(`[DeepFace] Error response:`, data);
+      console.error(`[FaceService] Error response:`, data.error || response.status);
       throw new Error(data.error || "Failed to extract face embedding");
     }
-
     return data;
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error("Face processing timed out. Please try with a smaller image.");
-    }
-    throw err;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Extract a face embedding from an image file.
+ * Local services read the file by path; remote services receive base64.
+ */
+async function extractFaceEmbedding(imagePath) {
+  const absolutePath = path.isAbsolute(imagePath) ? imagePath : path.join(UPLOADS_DIR, imagePath);
+  if (isRemoteDeepFace) {
+    const base64Image = (await fs.promises.readFile(absolutePath)).toString("base64");
+    return callExtract({ image_base64: base64Image });
+  }
+  return callExtract({ image_path: absolutePath });
+}
+
+/** Extract a face embedding from an in-memory image (e.g. a stored photo). */
+async function extractFaceEmbeddingFromBuffer(buffer) {
+  return callExtract({ image_base64: buffer.toString("base64") });
+}
+
+/** Remove a temporary upload, ignoring errors. */
+function removeUpload(file) {
+  if (file?.path) fs.promises.unlink(file.path).catch(() => {});
 }
 
 console.log("DeepFace enrollment route initialized (using service at " + DEEPFACE_SERVICE_URL + ")");
@@ -179,11 +184,12 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
     }
 
     const descriptor = faceData.embedding;
+    const image = await savePhotoFromFile(absoluteImagePath, { contentType: req.file.mimetype, teacherId, classroomId });
 
     const student = new Student({
       name,
       rollNumber,
-      image: req.file.filename,
+      image,
       faceDescriptors: [descriptor],
       faceDescriptor: descriptor,
       descriptorCount: 1,
@@ -195,14 +201,11 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
     res.status(201).json({ message: "Student enrolled successfully!", student });
   } catch (error) {
     console.error("Enroll error:", error.message);
-    console.error("Stack:", error.stack);
-    if (req.file && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    removeUpload(req.file);
     if (error.message === "Only image files are allowed") {
       return res.status(400).json({ error: error.message });
     }
-    res.status(500).json({ error: error.message || "Failed to enroll student" });
+    res.status(500).json({ error: "Failed to enroll student" });
   }
 });
 
@@ -221,16 +224,19 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "name and rollNumber are required" });
     }
 
+    if (!isValidObjectId(id)) {
+      removeUpload(req.file);
+      return res.status(400).json({ error: "Invalid student id" });
+    }
     const student = await Student.findById(id);
     if (!student) {
+      removeUpload(req.file);
       return res.status(404).json({ error: "Student not found" });
     }
 
     // Validate teacher ownership
     if (student.teacherId.toString() !== teacherId) {
-      if (req.file && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      removeUpload(req.file);
       return res.status(403).json({ error: "You can only update your own students" });
     }
 
@@ -250,11 +256,7 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
     student.rollNumber = rollNumber;
 
     if (req.file) {
-      const imagePath = req.file.path;
-      student.image = req.file.filename;
-
-      // req.file.path is already absolute (UPLOADS_DIR)
-      const absoluteImagePath = imagePath;
+      const absoluteImagePath = req.file.path;
 
       // Use DeepFace to extract face embedding
       let faceData;
@@ -266,6 +268,9 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
       }
 
       const newDescriptor = faceData.embedding;
+      const previousImage = student.image;
+      student.image = await savePhotoFromFile(absoluteImagePath, { contentType: req.file.mimetype, teacherId, classroomId: student.classroomId });
+      await deletePhoto(previousImage);
 
       if (!student.faceDescriptors || student.faceDescriptors.length === 0) {
         student.faceDescriptors = [newDescriptor];
@@ -286,9 +291,7 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
 
   } catch (error) {
     console.error("Update error:", error);
-    if (req.file && fs.existsSync(path.join(__dirname, '../', req.file.path))) {
-      fs.unlinkSync(path.join(__dirname, '../', req.file.path));
-    }
+    removeUpload(req.file);
     if (error.message === "Only image files are allowed") {
       return res.status(400).json({ error: error.message });
     }
@@ -305,10 +308,14 @@ router.get("/", authMiddleware, async (req, res) => {
 
     const query = { teacherId };
     if (classroomId) {
+      if (!isValidObjectId(classroomId)) {
+        return res.status(400).json({ error: "Invalid classroom id" });
+      }
       query.classroomId = classroomId;
     }
 
-    const students = await Student.find(query);
+    // Embeddings are large and not needed by the client list
+    const students = await Student.find(query, "-faceDescriptors -faceDescriptor").lean();
     res.status(200).json(students);
   } catch (error) {
     console.error(error);
@@ -356,11 +363,13 @@ router.post("/:id/add-photo", authMiddleware, upload.single("image"), async (req
       return res.status(400).json({ error: "Image file is required" });
     }
 
+    if (!isValidObjectId(id)) {
+      removeUpload(req.file);
+      return res.status(400).json({ error: "Invalid student id" });
+    }
     const student = await Student.findById(id);
     if (!student) {
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      removeUpload(req.file);
       return res.status(404).json({ error: "Student not found" });
     }
 
@@ -407,7 +416,10 @@ router.post("/:id/add-photo", authMiddleware, upload.single("image"), async (req
 
     student.faceDescriptor = newDescriptor;
     student.descriptorCount = student.faceDescriptors.length;
-    student.image = req.file.filename;
+    // The latest photo becomes the displayed / re-embedding reference
+    const previousImage = student.image;
+    student.image = await savePhotoFromFile(absoluteImagePath, { contentType: req.file.mimetype, teacherId, classroomId: student.classroomId });
+    await deletePhoto(previousImage);
 
     const updatedStudent = await student.save();
 
@@ -420,9 +432,7 @@ router.post("/:id/add-photo", authMiddleware, upload.single("image"), async (req
 
   } catch (error) {
     console.error("Add photo error:", error);
-    if (req.file && fs.existsSync(path.join(__dirname, '../', req.file.path))) {
-      fs.unlinkSync(path.join(__dirname, '../', req.file.path));
-    }
+    removeUpload(req.file);
     res.status(500).json({ error: "Failed to add photo" });
   }
 });
@@ -434,6 +444,9 @@ router.delete("/:id", authMiddleware, async (req, res) => {
     const { id } = req.params;
     const teacherId = req.teacher.id;
 
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
     const student = await Student.findById(id);
 
     if (!student) {
@@ -445,13 +458,7 @@ router.delete("/:id", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "You can only delete your own students" });
     }
 
-    // Delete student image file if it exists
-    if (student.image) {
-      const imagePath = path.join(__dirname, '../uploads', student.image);
-      if (fs.existsSync(imagePath)) {
-        fs.unlinkSync(imagePath);
-      }
-    }
+    await deletePhoto(student.image);
 
     await Student.findByIdAndDelete(id);
     res.status(200).json({ message: "Student deleted successfully" });
@@ -468,6 +475,9 @@ router.delete("/:id/reset-photos", authMiddleware, async (req, res) => {
     const { id } = req.params;
     const teacherId = req.teacher.id;
 
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
     const student = await Student.findById(id);
 
     if (!student) {
@@ -546,10 +556,10 @@ router.post("/re-embed", authMiddleware, async (req, res) => {
         continue;
       }
 
-      const imagePath = path.join(UPLOADS_DIR, student.image);
+      const photo = await readPhoto(student.image);
 
-      // Skip if image file is missing
-      if (!fs.existsSync(imagePath)) {
+      // Skip if the photo is missing
+      if (!photo) {
         results.skipped++;
         results.details.push({
           rollNumber: student.rollNumber,
@@ -563,7 +573,7 @@ router.post("/re-embed", authMiddleware, async (req, res) => {
       try {
         // Extract new embedding with current model (ArcFace)
         console.log(`[Re-embed] Processing ${student.rollNumber}: ${student.name}...`);
-        const faceData = await extractFaceEmbedding(imagePath);
+        const faceData = await extractFaceEmbeddingFromBuffer(photo.buffer);
         const newDescriptor = faceData.embedding;
 
         // Update student with new embedding
@@ -606,5 +616,29 @@ router.post("/re-embed", authMiddleware, async (req, res) => {
   }
 });
 
+
+// GET /enroll/:id/photo - a student's reference photo (owner only)
+router.get("/:id/photo", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ error: "Invalid student id" });
+    }
+    const student = await Student.findById(id, "teacherId image");
+    if (!student || student.teacherId.toString() !== req.teacher.id) {
+      return res.status(404).json({ error: "Photo not found" });
+    }
+    const photo = await readPhoto(student.image);
+    if (!photo) {
+      return res.status(404).json({ error: "Photo not found" });
+    }
+    res.set("Content-Type", photo.contentType);
+    res.set("Cache-Control", "private, max-age=300");
+    res.send(photo.buffer);
+  } catch (error) {
+    console.error("Photo fetch error:", error);
+    res.status(500).json({ error: "Failed to load photo" });
+  }
+});
 
 module.exports = router;

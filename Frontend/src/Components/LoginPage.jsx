@@ -59,36 +59,69 @@ export default function LoginPage({ isDark, setIsDark }) {
   };
 
   return (
-    <div className="min-h-screen flex bg-[var(--bg-app)]">
+    <div className="min-h-screen flex">
       {/* Left panel: branding (desktop only) */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-[var(--color-primary)]">
-        {/* Decorative elements */}
-        <div className="absolute inset-0">
-          <div className="absolute top-20 left-20 w-64 h-64 bg-white/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-20 right-20 w-80 h-80 bg-black/10 rounded-full blur-3xl" />
-        </div>
-
-        <div className="relative z-10 flex flex-col justify-between p-12 text-[var(--color-primary-text)]">
+      <div className="surface-ink hidden lg:flex lg:w-[52%] relative overflow-hidden bg-[var(--bg-sidebar)]">
+        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-white/20 flex items-center justify-center backdrop-blur-sm">
-              <FiCamera className="text-xl" />
+            <div className="h-9 w-9 rounded-lg bg-[var(--color-primary)] flex items-center justify-center text-[var(--color-primary-text)]">
+              <FiCamera className="text-lg" />
             </div>
-            <span className="font-bold text-xl">SnapTick</span>
+            <span className="font-semibold text-lg tracking-tight">SnapTick</span>
+            <span className="eyebrow ml-2">Attendance Intelligence</span>
           </div>
 
-          <div>
-            <h1 className="text-4xl font-bold mb-4 leading-tight">
-              Attendance made
-              <br />
-              effortless.
-            </h1>
-            <p className="text-lg opacity-80 max-w-sm">
-              AI-powered face recognition for modern classrooms. Save hours
-              every week.
+          <div className="max-w-lg">
+            <p className="eyebrow mb-5 flex items-center gap-2">
+              <span className="accent-dot" /> Biometric attendance for higher education
             </p>
+            <h1 className="font-display text-[64px] leading-[0.98] mb-6">
+              Every lecture,
+              <br />
+              <span className="italic text-[var(--color-primary)]">accounted for.</span>
+            </h1>
+            <p className="text-[15px] text-[var(--text-secondary)] mb-10 leading-relaxed max-w-md">
+              Verified face recognition, faculty review on every match, and eligibility
+              analytics aligned with the 75% attendance norm.
+            </p>
+
+            {/* Product preview: review queue */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border-subtle)]">
+                <span className="eyebrow">Review · BCA-III · 09:40</span>
+                <span className="font-mono text-[11px] text-[var(--text-muted)]">42 / 45 matched</span>
+              </div>
+              {[
+                ["2300320100107", "Verified", "0.91"],
+                ["2300320100091", "Verified", "0.88"],
+                ["2300320100035", "Needs review", "0.62"],
+              ].map(([roll, status, score]) => (
+                <div key={roll} className="flex items-center justify-between px-4 py-2.5 border-b last:border-b-0 border-[var(--border-subtle)]">
+                  <span className="font-mono text-xs text-[var(--text-secondary)]">{roll}</span>
+                  <span className="flex items-center gap-3">
+                    <span className="font-mono text-xs text-[var(--text-muted)]">{score}</span>
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded ${
+                        status === "Verified"
+                          ? "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                          : "border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {status}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <p className="text-sm opacity-60">Trusted by educators worldwide</p>
+          <div className="flex items-center gap-6 eyebrow">
+            <span>On-premise processing</span>
+            <span>·</span>
+            <span>Audit-ready records</span>
+            <span>·</span>
+            <span>CSV &amp; PDF export</span>
+          </div>
         </div>
       </div>
 
@@ -132,13 +165,14 @@ export default function LoginPage({ isDark, setIsDark }) {
 
             {/* Form header */}
             <div className="mb-8">
-              <h2 className="text-2xl font-bold text-[var(--text-main)] mb-2">
-                {isLogin ? "Welcome back" : "Create your account"}
+              <p className="eyebrow mb-3">{isLogin ? "Faculty sign in" : "Faculty registration"}</p>
+              <h2 className="font-display text-[40px] leading-none text-[var(--text-main)] mb-3">
+                {isLogin ? "Welcome back." : "Create your account."}
               </h2>
-              <p className="text-[var(--text-muted)]">
+              <p className="text-[var(--text-secondary)] text-sm">
                 {isLogin
-                  ? "Enter your credentials to access your dashboard"
-                  : "Start tracking attendance in minutes"}
+                  ? "Sign in with your institutional email to open your classrooms."
+                  : "Set up your faculty workspace to enrol students and record attendance."}
               </p>
             </div>
 
@@ -205,7 +239,7 @@ export default function LoginPage({ isDark, setIsDark }) {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Min 6 characters"
+                    placeholder={isLogin ? "Your password" : "At least 8 characters"}
                     className="input-premium w-full pl-11 pr-4 py-3"
                     required
                     minLength={6}

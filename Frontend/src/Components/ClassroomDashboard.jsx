@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion as Motion } from "framer-motion";
 import {
@@ -10,8 +10,33 @@ import {
   FiFolder,
   FiChevronRight,
   FiCalendar,
+  FiCheckCircle,
+  FiTrendingUp,
+  FiCamera,
+  FiBarChart2,
+  FiClock,
 } from "react-icons/fi";
 import { useClassroom } from "../context/ClassroomContext";
+import { useAuth } from "../context/AuthContext";
+import API_URL from "../config/api";
+
+const greeting = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+};
+
+const formatLastTaken = (key) => {
+  if (!key) return "Not started";
+  const d = new Date(`${key}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - d) / 86400000);
+  if (diff === 0) return "Taken today";
+  if (diff === 1) return "Last taken yesterday";
+  return `Last taken ${d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}`;
+};
 
 export default function ClassroomDashboard() {
   const navigate = useNavigate();
@@ -30,6 +55,19 @@ export default function ClassroomDashboard() {
   const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [overview, setOverview] = useState(null);
+  const { teacher, token } = useAuth();
+
+  // Live numbers for the stat cards and classroom cards
+  useEffect(() => {
+    if (!token) return;
+    fetch(`${API_URL}/attendance/overview`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setOverview)
+      .catch(() => setOverview(null));
+  }, [token, classrooms.length]);
+
+  const statsFor = (id) => overview?.classrooms.find((c) => c.classroomId === id);
 
   const openCreateModal = () => {
     setEditingClassroom(null);
@@ -108,22 +146,94 @@ export default function ClassroomDashboard() {
       exit={{ opacity: 0 }}
     >
       {/* Page header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--text-main)]">
-            My Classrooms
+          <p className="eyebrow mb-3">
+            {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          </p>
+          <h1 className="font-display text-[44px] leading-none text-[var(--text-main)]">
+            {greeting()}, {teacher?.name?.split(" ")[0] || "Teacher"}.
           </h1>
-          <p className="text-[var(--text-muted)] mt-1">
-            Manage your classes and track attendance
+          <p className="text-[var(--text-secondary)] mt-3">
+            Attendance overview for today across your classrooms.
           </p>
         </div>
         <button
           onClick={openCreateModal}
-          className="btn-primary px-4 py-2.5 rounded-xl flex items-center gap-2"
+          className="btn-primary px-5 py-3 rounded-xl flex items-center gap-2 self-start sm:self-auto"
         >
           <FiPlus /> New Classroom
         </button>
       </div>
+
+      {/* Overview stats */}
+      {classrooms.length > 0 && (
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-10">
+          {[
+            {
+              label: "Classrooms",
+              value: overview?.totalClassrooms ?? classrooms.length,
+              hint: overview ? `${overview.classesTakenToday} taken today` : "",
+              icon: <FiFolder />,
+              tone: "neutral",
+            },
+            {
+              label: "Students enrolled",
+              value: overview?.totalStudents ?? "—",
+              hint: "across all classes",
+              icon: <FiUsers />,
+              tone: "neutral",
+            },
+            {
+              label: "Present today",
+              highlight: true,
+              value: overview ? overview.presentToday : "—",
+              hint: overview?.todayRate != null ? `${overview.todayRate}% of classes taken` : "No attendance yet today",
+              icon: <FiCheckCircle />,
+              tone: "neutral",
+            },
+            {
+              label: "30-day average",
+              value: overview?.average30d != null ? `${overview.average30d}%` : "—",
+              hint: overview?.average30d != null && overview.average30d < 75 ? "Below 75% requirement" : "Attendance rate",
+              icon: <FiTrendingUp />,
+              tone: overview?.average30d != null && overview.average30d < 75 ? "warning" : "neutral",
+            },
+          ].map((s, i) => (
+            <Motion.div
+              key={s.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className={s.highlight ? "surface-ink rounded-xl p-5 bg-[var(--bg-sidebar)] border border-black/30" : "glass-card p-5"}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <p className="eyebrow">{s.label}</p>
+                <div
+                  className={`h-8 w-8 rounded-lg flex items-center justify-center ${
+                    s.tone === "warning"
+                      ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      : "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+                  }`}
+                >
+                  {s.icon}
+                </div>
+              </div>
+              <p className={`font-display text-[52px] leading-none tabular-nums ${s.highlight ? "text-[var(--color-primary)]" : "text-[var(--text-main)]"}`}>
+                {s.value}
+              </p>
+              {s.hint && <p className="text-xs text-[var(--text-muted)] mt-3">{s.hint}</p>}
+            </Motion.div>
+          ))}
+        </div>
+      )}
+
+      {classrooms.length > 0 && (
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-[28px] leading-none text-[var(--text-main)]">Classrooms</h2>
+          <p className="eyebrow">{classrooms.length} active</p>
+        </div>
+      )}
 
       {/* Empty state */}
       {classrooms.length === 0 ? (
@@ -159,11 +269,11 @@ export default function ClassroomDashboard() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.05 }}
               onClick={() => handleClassroomClick(classroom)}
-              className="glass-card p-5 cursor-pointer group hover:border-[var(--color-primary)]/50 transition-all"
+              className="glass-card card-hover p-5 cursor-pointer group flex flex-col"
             >
               <div className="flex items-start justify-between mb-4">
-                <div className="h-12 w-12 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center">
-                  <FiFolder className="text-xl text-[var(--color-primary)]" />
+                <div className="h-11 w-11 rounded-lg bg-[var(--color-primary-soft)] text-[var(--color-primary)] flex items-center justify-center text-lg font-bold">
+                  {classroom.name.trim().charAt(0).toUpperCase()}
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -184,7 +294,7 @@ export default function ClassroomDashboard() {
                 </div>
               </div>
 
-              <h3 className="font-semibold text-[var(--text-main)] mb-1 group-hover:text-[var(--color-primary)] transition-colors">
+              <h3 className="font-semibold text-[17px] text-[var(--text-main)] mb-1">
                 {classroom.name}
               </h3>
               {classroom.description && (
@@ -193,15 +303,75 @@ export default function ClassroomDashboard() {
                 </p>
               )}
 
-              <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--border-subtle)]">
-                <div className="flex items-center gap-4 text-sm text-[var(--text-muted)]">
-                  <span className="flex items-center gap-1">
-                    <FiUsers size={14} />
-                    {classroom.studentCount || 0} students
-                  </span>
-                </div>
-                <FiChevronRight className="text-[var(--text-muted)] group-hover:text-[var(--color-primary)] group-hover:translate-x-1 transition-all" />
-              </div>
+              {(() => {
+                const st = statsFor(classroom._id);
+                const students = st?.students ?? classroom.studentCount ?? 0;
+                const avg = st?.average30d;
+                return (
+                  <div className="mt-auto pt-4 space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-1.5 text-[var(--text-secondary)] font-medium">
+                        <FiUsers size={14} /> {students} {students === 1 ? "student" : "students"}
+                      </span>
+                      <span
+                        className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full ${
+                          st?.takenToday
+                            ? "bg-[var(--status-present-bg)] text-[var(--status-present-text)]"
+                            : "bg-[var(--bg-input)] text-[var(--text-muted)]"
+                        }`}
+                      >
+                        {st?.takenToday ? <FiCheckCircle size={12} /> : <FiClock size={12} />}
+                        {st?.takenToday ? `${st.presentToday}/${students} today` : "Not taken today"}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-[var(--text-muted)]">30-day attendance</span>
+                        <span className={`font-bold ${avg == null ? "text-[var(--text-muted)]" : avg >= 75 ? "text-[var(--status-present-text)]" : "text-amber-500"}`}>
+                          {avg == null ? "—" : `${avg}%`}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-[var(--bg-input)] overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${avg != null && avg < 75 ? "bg-amber-500" : "bg-[var(--color-primary)]"}`}
+                          style={{ width: `${avg ?? 0}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-3 border-t border-[var(--border-subtle)]">
+                      <span className="text-xs text-[var(--text-muted)] flex items-center gap-1 min-w-0 truncate">
+                        <FiCalendar size={12} className="flex-shrink-0" />
+                        <span className="truncate">{formatLastTaken(st?.lastTaken)}</span>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectClassroom(classroom);
+                            navigate(`/classroom/${classroom._id}/attendance`);
+                          }}
+                          className="px-2.5 py-1.5 rounded-md text-xs font-semibold bg-[var(--color-primary)] text-[var(--color-primary-text)] hover:bg-[var(--color-primary-hover)] flex items-center gap-1.5 whitespace-nowrap transition-colors"
+                          title="Take attendance"
+                        >
+                          <FiCamera size={13} /> Take attendance
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectClassroom(classroom);
+                            navigate(`/classroom/${classroom._id}/reports`);
+                          }}
+                          className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--color-primary)] hover:bg-[var(--nav-active-bg)] transition-colors"
+                          title="Reports"
+                        >
+                          <FiBarChart2 size={14} />
+                        </button>
+                        <FiChevronRight className="text-[var(--text-muted)] group-hover:text-[var(--color-primary)] group-hover:translate-x-0.5 transition-all" />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </Motion.div>
           ))}
 
@@ -211,10 +381,13 @@ export default function ClassroomDashboard() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: classrooms.length * 0.05 }}
             onClick={openCreateModal}
-            className="glass-card p-5 cursor-pointer border-dashed hover:border-[var(--color-primary)] transition-colors flex flex-col items-center justify-center min-h-[180px] text-[var(--text-muted)] hover:text-[var(--color-primary)]"
+            className="rounded-[1.25rem] p-5 cursor-pointer border-2 border-dashed border-[var(--border-dashed)] hover:border-[var(--color-primary)] hover:bg-[var(--nav-active-bg)] transition-colors flex flex-col items-center justify-center min-h-[220px] text-[var(--text-muted)] hover:text-[var(--color-primary)]"
           >
-            <FiPlus className="text-3xl mb-2" />
-            <span className="font-medium">Add Classroom</span>
+            <div className="h-12 w-12 rounded-xl border-2 border-dashed border-current flex items-center justify-center mb-3">
+              <FiPlus className="text-xl" />
+            </div>
+            <span className="font-semibold">New classroom</span>
+            <span className="text-xs mt-1">Add a section, batch or subject</span>
           </Motion.div>
         </div>
       )}

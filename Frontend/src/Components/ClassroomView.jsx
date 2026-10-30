@@ -14,6 +14,7 @@ import {
   FiGrid,
   FiFolder,
   FiChevronDown,
+  FiBarChart2,
 } from "react-icons/fi";
 import { useClassroom } from "../context/ClassroomContext";
 
@@ -43,6 +44,7 @@ export default function ClassroomView() {
     const path = location.pathname;
     if (path.includes("/attendance")) return "attendance";
     if (path.includes("/records")) return "records";
+    if (path.includes("/reports")) return "reports";
     return "enroll";
   };
 
@@ -51,21 +53,27 @@ export default function ClassroomView() {
   const tabs = [
     {
       id: "enroll",
-      label: "Enrollment",
+      label: "Students",
       icon: <FiUsers />,
       path: `/classroom/${classroomId}`,
     },
     {
       id: "attendance",
-      label: "Smart Scan",
+      label: "Take Attendance",
       icon: <FiUploadCloud />,
       path: `/classroom/${classroomId}/attendance`,
     },
     {
       id: "records",
-      label: "Records",
+      label: "Register",
       icon: <FiGrid />,
       path: `/classroom/${classroomId}/records`,
+    },
+    {
+      id: "reports",
+      label: "Analytics",
+      icon: <FiBarChart2 />,
+      path: `/classroom/${classroomId}/reports`,
     },
   ];
 
@@ -84,19 +92,17 @@ export default function ClassroomView() {
       exit={{ opacity: 0 }}
     >
       {/* Header with classroom selector */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 text-sm text-[var(--text-muted)] mb-2">
+      <div className="mb-6 print:hidden">
+        <div className="flex items-center gap-2 eyebrow mb-3">
           <Link
             to="/dashboard"
-            className="hover:text-[var(--color-primary)] transition-colors flex items-center gap-1"
+            className="hover:text-[var(--text-main)] transition-colors flex items-center gap-1"
           >
-            <FiArrowLeft size={14} />
-            Classrooms
+            <FiArrowLeft size={12} />
+            Overview
           </Link>
           <span>/</span>
-          <span className="text-[var(--text-secondary)]">
-            {activeClassroom.name}
-          </span>
+          <span className="text-[var(--text-secondary)]">Classroom</span>
         </div>
 
         <div className="flex items-start justify-between gap-4">
@@ -104,21 +110,18 @@ export default function ClassroomView() {
           <div className="relative">
             <button
               onClick={() => setShowDropdown(!showDropdown)}
-              className="flex items-center gap-3 p-2 pr-4 rounded-xl hover:bg-[var(--bg-input)] transition-colors group"
+              className="flex items-end gap-3 -ml-1 px-1 rounded-lg hover:bg-[var(--bg-input)] transition-colors group"
             >
-              <div className="h-10 w-10 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center">
-                <FiFolder className="text-lg text-[var(--color-primary)]" />
-              </div>
               <div className="text-left">
-                <h1 className="text-xl font-bold text-[var(--text-main)] group-hover:text-[var(--color-primary)] transition-colors">
+                <h1 className="font-display text-[32px] sm:text-[40px] leading-none text-[var(--text-main)]">
                   {activeClassroom.name}
                 </h1>
-                <p className="text-sm text-[var(--text-muted)]">
-                  {activeClassroom.studentCount || 0} students
+                <p className="text-sm text-[var(--text-muted)] mt-2 font-mono">
+                  {activeClassroom.studentCount || 0} students enrolled
                 </p>
               </div>
               <FiChevronDown
-                className={`text-[var(--text-muted)] transition-transform ${showDropdown ? "rotate-180" : ""}`}
+                className={`mb-7 text-[var(--text-muted)] transition-transform ${showDropdown ? "rotate-180" : ""}`}
               />
             </button>
 
@@ -173,15 +176,15 @@ export default function ClassroomView() {
       </div>
 
       {/* Tab navigation */}
-      <div className="flex gap-1 p-1 mb-6 bg-[var(--bg-input)] rounded-xl w-fit">
+      <div className="flex gap-6 mb-8 border-b border-[var(--border-subtle)] overflow-x-auto no-scrollbar -mx-6 px-6 lg:mx-0 lg:px-0 print:hidden">
         {tabs.map((tab) => (
           <Link
             key={tab.id}
             to={tab.path}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+            className={`flex items-center gap-2 pb-3 -mb-px text-sm font-medium border-b-2 whitespace-nowrap flex-shrink-0 transition-colors ${
               activeTab === tab.id
-                ? "bg-[var(--bg-card)] text-[var(--text-main)] shadow-sm"
-                : "text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                ? "border-[var(--color-primary)] text-[var(--text-main)]"
+                : "border-transparent text-[var(--text-muted)] hover:text-[var(--text-main)]"
             }`}
           >
             {tab.icon}

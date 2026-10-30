@@ -4,8 +4,18 @@ const Classroom = require("../models/classroom");
 const Student = require("../models/student");
 const Attendance = require("../models/attendance");
 const { authMiddleware } = require("./auth");
+const mongoose = require("mongoose");
+const { deletePhoto } = require("../storage/photos");
 
 const router = express.Router();
+
+// Reject malformed ids with 400 instead of a database cast error
+router.param("id", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return res.status(400).json({ error: "Invalid classroom id" });
+  }
+  next();
+});
 
 // POST /classroom - create classroom
 router.post("/", authMiddleware, async (req, res) => {
@@ -177,19 +187,10 @@ router.delete("/:id", authMiddleware, async (req, res) => {
       return res.status(403).json({ error: "You can only delete your own classrooms" });
     }
 
-    // Load students to delete their image files
+    // Delete every student's stored photo (biometric data must not outlive the record)
     const students = await Student.find({ classroomId: id }, "image");
-    const fs = require("fs");
-    const path = require("path");
-
-    // Delete student image files
     for (const student of students) {
-      if (student.image) {
-        const imagePath = path.join(__dirname, "../uploads", student.image);
-        if (fs.existsSync(imagePath)) {
-          fs.unlinkSync(imagePath);
-        }
-      }
+      await deletePhoto(student.image);
     }
 
     // Cascade: remove all students in this classroom

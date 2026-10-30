@@ -1,36 +1,31 @@
-# DeepFace Service Dockerfile
-# NOTE: This service requires a paid tier on Render (min 1GB RAM)
-# For development/demo, run locally or use Render's Starter plan ($7/month)
+# SnapTick face recognition service (InsightFace buffalo_l on ONNX Runtime, CPU)
+# Works on Hugging Face Spaces (Docker SDK, port 7860), Render, Railway or any Docker host.
+FROM python:3.11-slim
 
-FROM python:3.10-slim
-
-# Install system dependencies for OpenCV and canvas
-RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 \
+# OpenCV runtime libraries; a compiler is needed to build insightface's extension
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libgomp1 build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Hugging Face Spaces run containers as uid 1000
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PORT=7860
+WORKDIR $HOME/app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+COPY --chown=user requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Download the model pack at build time so cold starts do not depend on GitHub
+RUN python -c "from insightface.app import FaceAnalysis; \
+a = FaceAnalysis(name='buffalo_l', allowed_modules=['detection','recognition'], providers=['CPUExecutionProvider']); \
+a.prepare(ctx_id=-1, det_size=(640, 640)); print('model ready')"
 
-# Copy application code
-COPY app.py .
+COPY --chown=user app.py .
 
-# Expose port
-EXPOSE 5001
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV TF_CPP_MIN_LOG_LEVEL=2
-
-# Run the application
-CMD ["python", "app.py"]
+EXPOSE 7860
+# One process keeps memory low; threads let several teachers scan at the same time
+CMD gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 4 --timeout 180 app:app

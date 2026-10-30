@@ -12,11 +12,17 @@ import {
   FiX,
   FiCheckCircle,
   FiXCircle,
+  FiUserPlus,
+  FiUsers,
+  FiAlertTriangle,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import CorrectionModal from "./CorrectionModal";
+import CameraCapture from "./CameraCapture";
 import API_URL from "../config/api";
+import { downscaleImage } from "../utils/image";
+import useServiceHealth, { NETWORK_ERROR } from "../utils/useServiceHealth";
 
 // Compress preview image to reduce browser load
 const createCompressedPreview = (file, maxWidth = 800) => {
@@ -54,12 +60,14 @@ const AttendanceUploader = () => {
   const { classroomId } = useOutletContext();
   const { getAuthHeadersMultipart, token } = useAuth();
   const toast = useToast();
+  const health = useServiceHealth();
 
   // File upload state
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   // Loading and error state
   const [loading, setLoading] = useState(false);
@@ -73,6 +81,8 @@ const AttendanceUploader = () => {
   const [markedImageUrl, setMarkedImageUrl] = useState("");
   const [enrolledStudents, setEnrolledStudents] = useState([]);
   const [confirmations, setConfirmations] = useState({}); // faceIndex -> { status, studentId, addToTraining }
+  const [alreadyPresent, setAlreadyPresent] = useState([]); // roll numbers already marked today
+  const [manualPresent, setManualPresent] = useState([]); // studentIds marked present without a face
 
   // Final results state
   const [markedStudents, setMarkedStudents] = useState([]);
@@ -131,13 +141,14 @@ const AttendanceUploader = () => {
     }
 
     const formData = new FormData();
-    formData.append("groupPhoto", file);
+    formData.append("groupPhoto", await downscaleImage(file));
     formData.append("classroomId", classroomId);
     setLoading(true);
     setMessage("");
     setError("");
     setMarkedImageUrl("");
     setDiagnosisResults(null);
+    const startedAt = performance.now();
 
     try {
       const res = await fetch(`${API_URL}/attendance/upload`, {
@@ -160,12 +171,15 @@ const AttendanceUploader = () => {
           data.markedImageUrl ? `${data.markedImageUrl}?t=${Date.now()}` : "",
         );
         setEnrolledStudents(data.enrolledStudents || []);
+        setAlreadyPresent(data.alreadyPresent || []);
+        setManualPresent([]);
 
-        // Initialize confirmations; matched faces start as pending
+        // Initialize confirmations; confident matches start confirmed, the rest pending
         const initialConfirmations = {};
         data.detections?.forEach((det, idx) => {
+          const confident = det.match?.status === "matched" && (det.match?.confidence || 0) >= 75;
           initialConfirmations[idx] = {
-            status: "pending", // pending | confirmed | skipped | corrected
+            status: confident ? "confirmed" : "pending", // pending | confirmed | skipped | corrected
             studentId: det.match?.studentId || null,
             originalMatch: det.match,
             addToTraining: false,
@@ -174,14 +188,15 @@ const AttendanceUploader = () => {
         });
         setConfirmations(initialConfirmations);
 
+        const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
         toast.success(
-          `Detected ${data.faceCount} face(s), ${data.recognizedCount} recognized`,
+          `Detected ${data.faceCount} face(s), ${data.recognizedCount} recognized in ${seconds}s`,
         );
       } else {
         setError(data.error || "Processing failed.");
       }
     } catch {
-      setError("Server error.");
+      setError(NETWORK_ERROR);
     } finally {
       setLoading(false);
     }
@@ -258,12 +273,64 @@ const AttendanceUploader = () => {
     });
   };
 
+  // Add an unrecognized face as a new student, then mark them present
+  const handleEnrollNew = async ({ faceIndex, name, rollNumber }) => {
+    const detection = detections[faceIndex];
+    try {
+      const res = await fetch(`${API_URL}/attendance/enroll-face`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          classroomId,
+          name,
+          rollNumber,
+          faceImage: detection?.faceImage,
+          embedding: detection?.embedding,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { error: data.error || "Failed to add student" };
+
+      setEnrolledStudents((prev) => [...prev, data.student]);
+      setConfirmations((prev) => ({
+        ...prev,
+        [faceIndex]: {
+          ...prev[faceIndex],
+          status: "corrected",
+          studentId: data.student._id,
+          addToTraining: false,
+          isNewStudent: true,
+        },
+      }));
+      toast.success(`${data.student.name} added to the class`);
+      return {};
+    } catch {
+      return { error: NETWORK_ERROR };
+    }
+  };
+
+  const toggleManualPresent = (studentId) => {
+    setManualPresent((prev) =>
+      prev.includes(studentId) ? prev.filter((id) => id !== studentId) : [...prev, studentId],
+    );
+  };
+
   // Count confirmed faces
-  const getConfirmedCount = () => {
+  const getConfirmedFaceCount = () => {
     return Object.values(confirmations).filter(
       (c) => c.status === "confirmed" || c.status === "corrected",
     ).length;
   };
+  const getConfirmedCount = () => getConfirmedFaceCount() + manualPresent.length;
+
+  // Students assigned to a face in this scan (matched, confirmed or corrected)
+  const studentIdsInPhoto = Object.values(confirmations)
+    .filter((c) => c.status !== "skipped" && c.studentId)
+    .map((c) => c.studentId);
+  const notInPhoto = enrolledStudents.filter((s) => !studentIdsInPhoto.includes(s._id));
+  const unknownCount = detections.filter(
+    (d, idx) => d.match?.status === "unknown" && !confirmations[idx]?.studentId && confirmations[idx]?.status !== "skipped",
+  ).length;
 
   // Resolve student name by ID
   const getStudentName = (studentId) => {
@@ -299,8 +366,8 @@ const AttendanceUploader = () => {
 
     const allConfirmations = [...confirmedFaces, ...skippedFaces];
 
-    if (confirmedFaces.length === 0) {
-      toast.error("No faces confirmed for attendance");
+    if (confirmedFaces.length === 0 && manualPresent.length === 0) {
+      toast.error("No students confirmed for attendance");
       return;
     }
 
@@ -316,6 +383,7 @@ const AttendanceUploader = () => {
         body: JSON.stringify({
           classroomId,
           confirmations: allConfirmations,
+          manualStudentIds: manualPresent,
         }),
       });
 
@@ -327,13 +395,16 @@ const AttendanceUploader = () => {
       }
 
       // Display final results
-      setMarkedStudents(data.markedStudents || []);
+      setMarkedStudents([
+        ...(data.markedStudents || []),
+        ...(data.alreadyPresentStudents || []).map((st) => ({ ...st, alreadyPresent: true })),
+      ]);
       setShowResults(true);
       setReviewMode(false);
       setMessage(data.message);
       toast.success(data.message);
     } catch {
-      setError("Server error while marking attendance");
+      setError(NETWORK_ERROR);
     } finally {
       setConfirming(false);
     }
@@ -350,6 +421,8 @@ const AttendanceUploader = () => {
     setReviewMode(false);
     setDetections([]);
     setConfirmations({});
+    setAlreadyPresent([]);
+    setManualPresent([]);
     setShowResults(false);
     setDiagnosisResults(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -370,7 +443,7 @@ const AttendanceUploader = () => {
       return;
     }
     const formData = new FormData();
-    formData.append("groupPhoto", file);
+    formData.append("groupPhoto", await downscaleImage(file));
     formData.append("classroomId", classroomId);
     setDiagnosing(true);
     setError("");
@@ -392,7 +465,7 @@ const AttendanceUploader = () => {
       setDiagnosisResults(data);
       toast.success(`Diagnosed ${data.faces?.length || 0} face(s)`);
     } catch {
-      setError("Server error during diagnosis.");
+      setError(NETWORK_ERROR);
     } finally {
       setDiagnosing(false);
     }
@@ -404,19 +477,50 @@ const AttendanceUploader = () => {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-8"
     >
+      <AnimatePresence>
+        {cameraOpen && (
+          <CameraCapture
+            onClose={() => setCameraOpen(false)}
+            onCapture={(captured) => {
+              setCameraOpen(false);
+              handleFileSelect(captured);
+            }}
+          />
+        )}
+      </AnimatePresence>
       <div className="flex items-center justify-between">
-        <div className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--bg-input)] border border-[var(--border-subtle)] text-[var(--color-primary)] text-sm font-bold shadow-sm">
-          <FiCpu className="animate-pulse" /> AI Engine Ready
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-3 py-1.5 rounded-full bg-[var(--bg-card)] border border-[var(--border-subtle)] text-xs font-medium text-[var(--text-secondary)]">
+          {health.ready ? (
+            <>
+              <span className="accent-dot" /> Recognition engine online
+              <span className="font-mono text-[var(--text-muted)]">· review before saving</span>
+            </>
+          ) : (
+            <>
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" /> Recognition engine is waking up
+              <span className="font-mono text-[var(--text-muted)]">· the first scan may take up to a minute</span>
+            </>
+          )}
         </div>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-8">
         {/* Upload card */}
-        <div className="glass-card p-8 h-full flex flex-col">
+        <div className="glass-card p-5 sm:p-8 h-full flex flex-col min-w-0">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-bold text-[var(--text-main)] flex items-center gap-2">
-              <FiCamera className="text-[var(--text-muted)]" /> Source Image
+              <FiCamera className="text-[var(--text-muted)]" /> Class photograph
             </h2>
+            <div className="flex items-center gap-2">
+              {!reviewMode && (
+                <button
+                  type="button"
+                  onClick={() => setCameraOpen(true)}
+                  className="text-xs font-bold text-[var(--color-primary)] hover:text-[var(--text-main)] bg-[var(--bg-app)] px-3 py-1 rounded-full border border-[var(--border-subtle)] flex items-center gap-1 whitespace-nowrap"
+                >
+                  <FiCamera /> Use Camera
+                </button>
+              )}
             {file && (
               <button
                 onClick={clearState}
@@ -425,6 +529,7 @@ const AttendanceUploader = () => {
                 Reset
               </button>
             )}
+            </div>
           </div>
 
           <form onSubmit={handleDetect} className="flex-1 flex flex-col">
@@ -468,10 +573,10 @@ const AttendanceUploader = () => {
                     <FiUploadCloud className="text-4xl text-[var(--text-muted)]" />
                   </div>
                   <p className="text-[var(--text-main)] font-bold text-lg">
-                    Click to Upload
+                    Upload a class photograph
                   </p>
                   <p className="text-[var(--text-muted)] text-sm mt-1">
-                    or drag and drop classroom photo
+                    Drag and drop a JPG or PNG, or capture one with the camera
                   </p>
                 </div>
               )}
@@ -490,7 +595,7 @@ const AttendanceUploader = () => {
                   ) : (
                     <FiCpu />
                   )}
-                  {loading ? "Detecting..." : "Detect Faces"}
+                  {loading ? "Recognising…" : "Run recognition"}
                 </button>
                 <button
                   type="button"
@@ -553,14 +658,14 @@ const AttendanceUploader = () => {
         </div>
 
         {/* Results card */}
-        <div className="glass-card p-8 h-full flex flex-col relative overflow-hidden">
+        <div className="glass-card p-5 sm:p-8 h-full flex flex-col relative overflow-hidden min-w-0">
           <div className="flex items-center gap-3 mb-6">
             <h2 className="text-lg font-bold text-[var(--text-main)]">
               {reviewMode
-                ? "Review Detections"
+                ? "Review matches"
                 : showResults
                   ? "Attendance Marked"
-                  : "Results"}
+                  : "Recognition results"}
             </h2>
             {reviewMode && detections.length > 0 && (
               <span className="px-3 py-1 rounded-full bg-[var(--bg-input)] border border-[var(--border-subtle)] text-[var(--text-muted)] text-xs font-extrabold">
@@ -595,7 +700,7 @@ const AttendanceUploader = () => {
                       ? "Diagnosing..."
                       : confirming
                         ? "Marking Attendance..."
-                        : "Detecting Faces..."}
+                        : "Running face recognition…"}
                   </p>
                 </Motion.div>
               )}
@@ -621,7 +726,7 @@ const AttendanceUploader = () => {
                   <div className="h-full flex flex-col items-center justify-center text-[var(--text-muted)] border-2 border-dashed border-[var(--border-subtle)] rounded-3xl p-8">
                     <FiMaximize className="text-5xl mb-4 opacity-50" />
                     <p className="font-medium">
-                      Detection results will appear here
+                      Matches appear here after you run recognition
                     </p>
                   </div>
                 )}
@@ -646,6 +751,16 @@ const AttendanceUploader = () => {
                     </button>
                   </div>
 
+                  {unknownCount > 0 && (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
+                      <FiAlertTriangle className="flex-shrink-0" />
+                      <span>
+                        <b>{unknownCount} face{unknownCount > 1 ? "s" : ""} not recognized.</b> Click
+                        &nbsp;<b>Identify</b> to pick the student or add them as a new student.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Face cards */}
                   {detections.map((detection, idx) => {
                     const conf = confirmations[idx] || {};
@@ -665,7 +780,7 @@ const AttendanceUploader = () => {
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: idx * 0.05 }}
-                        className={`p-4 rounded-xl border transition-all ${
+                        className={`p-3 sm:p-4 rounded-xl border transition-all ${
                           isSkipped
                             ? "bg-[var(--bg-input)]/50 border-[var(--border-subtle)] opacity-60"
                             : isConfirmed
@@ -673,37 +788,50 @@ const AttendanceUploader = () => {
                               : "bg-[var(--bg-input)] border-[var(--border-subtle)]"
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            {/* Face index indicator */}
-                            <div
-                              className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${
-                                isSkipped
-                                  ? "bg-[var(--bg-app)] text-[var(--text-muted)]"
-                                  : isConfirmed
-                                    ? "bg-[var(--status-present-bg)] text-[var(--status-present-text)]"
-                                    : "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
-                              }`}
-                            >
-                              {isSkipped ? (
-                                <FiX size={16} />
-                              ) : isConfirmed ? (
-                                <FiCheck size={16} />
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            {/* Face thumbnail with status badge */}
+                            <div className="relative flex-shrink-0">
+                              {detection.faceImageUrl ? (
+                                <img
+                                  src={detection.faceImageUrl}
+                                  alt={`Face ${idx + 1}`}
+                                  className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl object-cover border-2 ${
+                                    isSkipped
+                                      ? "border-[var(--border-subtle)] grayscale"
+                                      : isConfirmed
+                                        ? "border-[var(--status-present-text)]"
+                                        : detection.match?.status === "unknown"
+                                          ? "border-amber-500"
+                                          : "border-[var(--border-subtle)]"
+                                  }`}
+                                />
                               ) : (
-                                `#${idx + 1}`
+                                <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-[var(--bg-app)]" />
                               )}
+                              <span
+                                className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold border-2 border-[var(--bg-card)] ${
+                                  isSkipped
+                                    ? "bg-[var(--bg-app)] text-[var(--text-muted)]"
+                                    : isConfirmed
+                                      ? "bg-[var(--status-present-bg)] text-[var(--status-present-text)]"
+                                      : "bg-[var(--color-primary)] text-[var(--color-primary-text)]"
+                                }`}
+                              >
+                                {isSkipped ? <FiX size={12} /> : isConfirmed ? <FiCheck size={12} /> : idx + 1}
+                              </span>
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <p
-                                className={`font-bold ${isSkipped ? "text-[var(--text-muted)] line-through" : "text-[var(--text-main)]"}`}
+                                className={`font-semibold truncate ${isSkipped ? "text-[var(--text-muted)] line-through" : "text-[var(--text-main)]"}`}
                               >
                                 {isSkipped
                                   ? detection.match?.name || "Unknown"
                                   : displayName}
                                 {conf.status === "corrected" && (
                                   <span className="ml-2 text-xs text-[var(--color-primary)]">
-                                    (corrected)
+                                    {conf.isNewStudent ? "(new student)" : "(corrected)"}
                                   </span>
                                 )}
                               </p>
@@ -712,7 +840,7 @@ const AttendanceUploader = () => {
                               {!isSkipped &&
                                 detection.match?.status === "matched" && (
                                   <div className="flex items-center gap-2 mt-1">
-                                    <div className="w-20 h-1.5 bg-[var(--bg-app)] rounded-full overflow-hidden">
+                                    <div className="w-14 sm:w-20 h-1.5 bg-[var(--bg-app)] rounded-full overflow-hidden">
                                       <div
                                         className={`h-full rounded-full ${getConfidenceBgColor(confidence)}`}
                                         style={{ width: `${confidence}%` }}
@@ -737,7 +865,7 @@ const AttendanceUploader = () => {
                           </div>
 
                           {/* Action buttons */}
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                             {!isSkipped && (
                               <>
                                 {/* Confirm/unconfirm button */}
@@ -758,14 +886,24 @@ const AttendanceUploader = () => {
                                   </button>
                                 )}
 
-                                {/* Incorrect match button */}
-                                <button
-                                  onClick={() => handleWrongClick(idx)}
-                                  className="p-2 rounded-lg bg-[var(--bg-app)] text-[var(--text-muted)] hover:text-[var(--status-absent-text)] hover:bg-[var(--status-absent-bg)] transition-colors"
-                                  title="Wrong match"
-                                >
-                                  <FiXCircle size={18} />
-                                </button>
+                                {/* Identify (unknown) or correct (wrong match) */}
+                                {detection.match?.status === "unknown" && !conf.studentId ? (
+                                  <button
+                                    onClick={() => handleWrongClick(idx)}
+                                    className="px-3 py-2 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-400 text-xs font-bold hover:bg-amber-500/25 transition-colors flex items-center gap-1"
+                                    title="Identify this face"
+                                  >
+                                    <FiUserPlus size={14} /> Identify
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => handleWrongClick(idx)}
+                                    className="p-2 rounded-lg bg-[var(--bg-app)] text-[var(--text-muted)] hover:text-[var(--status-absent-text)] hover:bg-[var(--status-absent-bg)] transition-colors"
+                                    title="Wrong match"
+                                  >
+                                    <FiXCircle size={18} />
+                                  </button>
+                                )}
                               </>
                             )}
 
@@ -782,6 +920,48 @@ const AttendanceUploader = () => {
                       </Motion.div>
                     );
                   })}
+
+                  {/* Enrolled students not found in the photo */}
+                  {notInPhoto.length > 0 && (
+                    <div className="mt-6 pt-5 border-t border-[var(--border-subtle)]">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm font-bold text-[var(--text-main)] flex items-center gap-2">
+                          <FiUsers className="text-[var(--text-muted)]" />
+                          Not found in photo ({notInPhoto.length})
+                        </p>
+                        <p className="text-xs text-[var(--text-muted)]">Tap to mark present</p>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        {notInPhoto.map((s) => {
+                          const already = alreadyPresent.includes(s.rollNumber);
+                          const marked = manualPresent.includes(s._id);
+                          return (
+                            <button
+                              key={s._id}
+                              type="button"
+                              disabled={already}
+                              onClick={() => toggleManualPresent(s._id)}
+                              className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-left text-sm transition-colors ${
+                                already
+                                  ? "border-[var(--border-subtle)] bg-[var(--bg-input)] opacity-70 cursor-default"
+                                  : marked
+                                    ? "border-[var(--status-present-text)]/40 bg-[var(--status-present-bg)] text-[var(--status-present-text)]"
+                                    : "border-[var(--border-subtle)] bg-[var(--bg-input)] hover:border-[var(--color-primary)]"
+                              }`}
+                            >
+                              <span className="min-w-0">
+                                <span className="block font-semibold truncate text-[var(--text-main)]">{s.name}</span>
+                                <span className="block text-xs text-[var(--text-muted)]">{s.rollNumber}</span>
+                              </span>
+                              <span className="text-xs font-bold whitespace-nowrap">
+                                {already ? "Already present" : marked ? "Present ✓" : "Absent"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </Motion.div>
               )}
 
@@ -819,9 +999,13 @@ const AttendanceUploader = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="w-8 h-8 rounded-full bg-[var(--status-present-bg)] flex items-center justify-center text-[var(--status-present-text)]">
-                          <FiCheck />
-                        </div>
+                        {student.alreadyPresent ? (
+                          <span className="text-xs font-bold text-[var(--text-muted)]">Already present</span>
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-[var(--status-present-bg)] flex items-center justify-center text-[var(--status-present-text)]">
+                            <FiCheck />
+                          </div>
+                        )}
                       </Motion.div>
                     ))}
                   </div>
@@ -893,11 +1077,11 @@ const AttendanceUploader = () => {
                                 <div className="w-24 h-2 bg-[var(--bg-app)] rounded-full overflow-hidden">
                                   <div
                                     className={`h-full rounded-full ${
-                                      candidate.minDistance <= 0.35
+                                      candidate.minDistance <= diagnosisResults.threshold - 0.25
                                         ? "bg-green-500"
-                                        : candidate.minDistance <= 0.5
+                                        : candidate.minDistance <= diagnosisResults.threshold - 0.1
                                           ? "bg-yellow-500"
-                                          : candidate.minDistance <= 0.6
+                                          : candidate.minDistance <= diagnosisResults.threshold
                                             ? "bg-orange-500"
                                             : "bg-red-500"
                                     }`}
@@ -908,11 +1092,11 @@ const AttendanceUploader = () => {
                                 </div>
                                 <span
                                   className={`text-xs font-mono ${
-                                    candidate.minDistance <= 0.35
+                                    candidate.minDistance <= diagnosisResults.threshold - 0.25
                                       ? "text-green-500"
-                                      : candidate.minDistance <= 0.5
+                                      : candidate.minDistance <= diagnosisResults.threshold - 0.1
                                         ? "text-yellow-500"
-                                        : candidate.minDistance <= 0.6
+                                        : candidate.minDistance <= diagnosisResults.threshold
                                           ? "text-orange-500"
                                           : "text-red-500"
                                   }`}
@@ -960,9 +1144,12 @@ const AttendanceUploader = () => {
           })
         }
         onSave={handleSaveCorrection}
+        onEnrollNew={handleEnrollNew}
         faceIndex={correctionModal.faceIndex}
         currentMatch={correctionModal.currentMatch}
+        faceImageUrl={detections[correctionModal.faceIndex]?.faceImageUrl}
         enrolledStudents={enrolledStudents}
+        takenStudentIds={studentIdsInPhoto}
       />
     </Motion.div>
   );

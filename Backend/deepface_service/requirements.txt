@@ -1,6 +1,7 @@
 flask==3.0.0
-deepface==0.0.89
-numpy
+insightface==0.7.3
+onnxruntime>=1.17
+numpy<2
 opencv-python
-tf-keras
 pillow
+gunicorn==23.0.0
