@@ -97,6 +97,25 @@ Base URL: `http://localhost:5000`
 | /attendance | GET | Get attendance records |
 | /attendance/mark | POST | Mark attendance manually |
 | /attendance/unmark | DELETE | Remove attendance record |
+| /attendance/register.xlsx | GET | Excel attendance register (university format) |
+| /attendance/alerts | GET | Students below the class threshold |
+| /attendance/alerts/send | POST | Email low-attendance alerts (optionally guardians) |
+| /attendance/audit | GET | Activity log for a classroom |
+| /enroll/import-roster | POST | Bulk add students from CSV text |
+| /enroll/import-photos | POST | Bulk add face photos from a ZIP named by roll number |
+| /classroom/:id/settings | PUT | Timetable, subject code, threshold, live-camera-only |
+| /classroom/:id/purge-biometrics | POST | Delete all face data and photos of a class |
+| /auth/forgot-password, /auth/reset-password | POST | Teacher password reset by emailed code |
+| /requests | GET | Student correction requests for the teacher |
+| /requests/:id/decide | POST | Approve or reject a request |
+| /portal/register, /portal/login | POST | Student portal accounts |
+| /portal/me | GET | Student's attendance in every subject |
+| /portal/requests | GET/POST | Student's correction requests |
+| /admin/overview | GET | Department totals, teachers, classrooms, defaulters (admin) |
+| /admin/teachers/:id | PUT | Activate/deactivate, role, department (admin) |
+| /admin/classrooms/:id/unlock | POST | Re-open a locked day for 24 hours (admin) |
+| /admin/holidays | GET/POST/DELETE | Holiday calendar |
+| /admin/summary/send, /admin/summary/cron | POST/GET | Weekly HOD summary email |
 
 - Success: `{ success: true, ... }` or `{ message: "..." }`
 - Error: `{ error: "..." }` with status code
