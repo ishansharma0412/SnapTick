@@ -21,9 +21,9 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: BASE_URL
-        sync: false # e.g. https://snaptick-api.onrender.com
+        value: https://snaptick-api-0cza.onrender.com # this service's public URL
       - key: ALLOWED_ORIGINS
-        sync: false # e.g. https://snaptick.vercel.app
+        value: https://snaptick.vercel.app # Vercel client URL(s), comma-separated
       - key: DEEPFACE_URL
         sync: false # e.g. https://<user>-snaptick-face.hf.space
       - key: ALLOWED_EMAIL_DOMAINS
