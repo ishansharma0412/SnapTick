@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   useParams,
   useNavigate,
@@ -15,8 +15,12 @@ import {
   FiFolder,
   FiChevronDown,
   FiBarChart2,
+  FiInbox,
+  FiSettings,
 } from "react-icons/fi";
 import { useClassroom } from "../context/ClassroomContext";
+import { useAuth } from "../context/AuthContext";
+import { api } from "../utils/api";
 
 export default function ClassroomView() {
   const { classroomId } = useParams();
@@ -25,6 +29,19 @@ export default function ClassroomView() {
   const { classrooms, activeClassroom, selectClassroom, loading } =
     useClassroom();
   const [showDropdown, setShowDropdown] = useState(false);
+  const { token } = useAuth();
+  const [pending, setPending] = useState(0);
+
+  const refreshPending = useCallback(() => {
+    if (!classroomId || !token) return;
+    api("/requests/pending-count", { token })
+      .then((counts) => setPending(counts[classroomId] || 0))
+      .catch(() => {});
+  }, [classroomId, token]);
+
+  useEffect(() => {
+    refreshPending();
+  }, [refreshPending]);
 
   // Set active classroom from URL param
   useEffect(() => {
@@ -45,6 +62,8 @@ export default function ClassroomView() {
     if (path.includes("/attendance")) return "attendance";
     if (path.includes("/records")) return "records";
     if (path.includes("/reports")) return "reports";
+    if (path.includes("/requests")) return "requests";
+    if (path.includes("/settings")) return "settings";
     return "enroll";
   };
 
@@ -74,6 +93,19 @@ export default function ClassroomView() {
       label: "Analytics",
       icon: <FiBarChart2 />,
       path: `/classroom/${classroomId}/reports`,
+    },
+    {
+      id: "requests",
+      label: "Requests",
+      icon: <FiInbox />,
+      path: `/classroom/${classroomId}/requests`,
+      badge: pending,
+    },
+    {
+      id: "settings",
+      label: "Settings",
+      icon: <FiSettings />,
+      path: `/classroom/${classroomId}/settings`,
     },
   ];
 
@@ -189,6 +221,11 @@ export default function ClassroomView() {
           >
             {tab.icon}
             {tab.label}
+            {tab.badge > 0 && (
+              <span className="ml-0.5 min-w-5 h-5 px-1.5 rounded-full bg-[var(--accent)] text-[var(--accent-ink)] text-[11px] font-bold flex items-center justify-center">
+                {tab.badge}
+              </span>
+            )}
           </Link>
         ))}
       </div>
@@ -197,7 +234,8 @@ export default function ClassroomView() {
       <Outlet
         context={{
           classroomId: activeClassroom._id,
-          classroom: activeClassroom,
+          classroom: classrooms.find((c) => c._id === activeClassroom._id) || activeClassroom,
+          refreshPending,
         }}
       />
     </Motion.div>

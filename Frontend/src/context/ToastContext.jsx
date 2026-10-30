@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useMemo } from "react";
 import { AnimatePresence, motion as Motion } from "framer-motion";
 import { FiCheck, FiX, FiAlertCircle, FiInfo } from "react-icons/fi";
 
@@ -43,13 +43,17 @@ export function ToastProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = {
-    success: (msg, duration) => addToast(msg, "success", duration),
-    error: (msg, duration) => addToast(msg, "error", duration),
-    warning: (msg, duration) => addToast(msg, "warning", duration),
-    info: (msg, duration) => addToast(msg, "info", duration),
-    dismiss: removeToast,
-  };
+  // Stable identity so components can list `toast` in effect dependencies
+  const toast = useMemo(
+    () => ({
+      success: (msg, duration) => addToast(msg, "success", duration),
+      error: (msg, duration) => addToast(msg, "error", duration),
+      warning: (msg, duration) => addToast(msg, "warning", duration),
+      info: (msg, duration) => addToast(msg, "info", duration),
+      dismiss: removeToast,
+    }),
+    [addToast, removeToast],
+  );
 
   return (
     <ToastContext.Provider value={toast}>

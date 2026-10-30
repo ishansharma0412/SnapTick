@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* dark: utilities follow the in-app theme toggle (.dark on <html>), not the OS setting */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Instrument Serif", ui-serif, Georgia, serif;

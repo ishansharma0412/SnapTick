@@ -19,6 +19,7 @@ import ConfirmModal from "./ConfirmModal";
 import API_URL from "../config/api";
 import { downscaleImage } from "../utils/image";
 import StudentPhoto from "./StudentPhoto";
+import RosterImport from "./RosterImport";
 import { fetchStudentPhoto } from "../utils/studentPhoto";
 
 // Compress preview image to reduce browser load
@@ -81,7 +82,10 @@ const EnrollForm = () => {
     if (classroomId) fetchStudents();
   }, [token, classroomId]);
 
+  const [consent, setConsent] = useState(false);
+
   const resetForm = () => {
+    setConsent(false);
     setName("");
     setRollNumber("");
     setImage(null);
@@ -110,6 +114,7 @@ const EnrollForm = () => {
     formData.append("rollNumber", rollNumber);
     formData.append("image", await downscaleImage(image, 1280));
     formData.append("classroomId", classroomId);
+    formData.append("consent", String(consent));
     setLoading(true);
     setMessage("");
     setError("");
@@ -138,6 +143,7 @@ const EnrollForm = () => {
     const formData = new FormData();
     formData.append("name", editing.name);
     formData.append("rollNumber", editing.rollNumber);
+    for (const key of ["email", "phone", "guardianEmail", "guardianPhone"]) formData.append(key, editing[key] || "");
     if (editing.image) formData.append("image", await downscaleImage(editing.image, 1280));
     setLoading(true);
     setMessage("");
@@ -281,7 +287,7 @@ const EnrollForm = () => {
       <div className="grid xl:grid-cols-12 gap-8">
         {/* Enrollment form */}
         <div className="xl:col-span-4">
-          <div className="glass-card p-5 sm:p-8 xl:sticky xl:top-24">
+          <div className="glass-card p-5 sm:p-8">
             <h2 className="text-xl font-bold text-[var(--text-main)] mb-6 flex items-center gap-2">
               <span className="w-8 h-8 rounded-full flex items-center justify-center bg-[var(--bg-app)] text-[var(--text-muted)] border border-[var(--border-subtle)]">
                 {addingPhoto ? (
@@ -386,6 +392,32 @@ const EnrollForm = () => {
                       required
                     />
                   </div>
+                  {editing && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        ["email", "Student email"],
+                        ["phone", "Student phone"],
+                        ["guardianEmail", "Guardian email"],
+                        ["guardianPhone", "Guardian phone"],
+                      ].map(([key, label]) => (
+                        <div key={key}>
+                          <label className="text-xs font-bold text-[var(--text-muted)] ml-1">{label}</label>
+                          <input
+                            type="text"
+                            value={editing[key] || ""}
+                            onChange={(e) => setEditing({ ...editing, [key]: e.target.value })}
+                            className="input-premium w-full mt-1 px-3 py-2 text-sm"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {!editing && (
+                    <label className="flex items-start gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                      <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[var(--color-primary)]" />
+                      The student has agreed to their photo and face data being stored for attendance.
+                    </label>
+                  )}
                 </div>
               )}
 
@@ -401,7 +433,7 @@ const EnrollForm = () => {
                 )}
                 <button
                   type="submit"
-                  disabled={loading || (addingPhoto && !addingPhoto.image)}
+                  disabled={loading || (addingPhoto && !addingPhoto.image) || (!editing && !addingPhoto && !consent)}
                   className="btn-primary flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2"
                 >
                   {loading
@@ -426,6 +458,15 @@ const EnrollForm = () => {
               )}
             </form>
           </div>
+          {!editing && !addingPhoto && (
+            <RosterImport
+              classroomId={classroomId}
+              onDone={(created) => {
+                fetchStudents();
+                if (created) updateStudentCount(classroomId, created);
+              }}
+            />
+          )}
         </div>
 
         {/* Student list */}
@@ -564,7 +605,9 @@ const EnrollForm = () => {
                           {student.rollNumber}
                         </span>
                         <span className="text-[11px] sm:text-xs text-[var(--text-muted)]">
-                          {student.descriptorCount || 1} {(student.descriptorCount || 1) === 1 ? "sample" : "samples"}
+                          {student.descriptorCount
+                            ? `${student.descriptorCount} ${student.descriptorCount === 1 ? "sample" : "samples"}`
+                            : "No face yet"}
                         </span>
                       </div>
                     </div>

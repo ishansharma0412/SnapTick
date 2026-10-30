@@ -10,10 +10,14 @@ import {
   FiSearch,
   FiTrendingUp,
   FiUsers,
+  FiGrid,
+  FiBell,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import API_URL from "../config/api";
+import { downloadFile } from "../utils/api";
+import AlertsPanel from "./AlertsPanel";
 
 // Local YYYY-MM-DD (toISOString would shift the date in IST)
 const toDateInput = (d) => {
@@ -86,6 +90,7 @@ const Reports = () => {
   const [search, setSearch] = useState("");
   const [onlyDefaulters, setOnlyDefaulters] = useState(false);
   const [sortBy, setSortBy] = useState("rollNumber");
+  const [showAlerts, setShowAlerts] = useState(false);
 
   useEffect(() => {
     if (!classroomId) return;
@@ -136,9 +141,9 @@ const Reports = () => {
 
   const exportCsv = () => {
     if (!report) return;
-    const header = ["Roll Number", "Name", "Classes Attended", "Classes Missed", "Total Classes", "Attendance %", "Status"];
+    const header = ["Roll Number", "Name", "Lectures Attended", "Of which Duty Leave", "Medical Leave (excused)", "Absent", "Counted Lectures", "Attendance %", "Status"];
     const lines = report.students.map((s) =>
-      [s.rollNumber, s.name, s.present, s.absent, report.totalSessions, s.percentage, STATUS_STYLES[s.status].label]
+      [s.rollNumber, s.name, s.present, s.dutyLeave || 0, s.medicalLeave || 0, s.absent, s.totalSessions, s.percentage, STATUS_STYLES[s.status].label]
         .map(csvCell)
         .join(","),
     );
@@ -160,7 +165,21 @@ const Reports = () => {
     toast.success("Attendance report downloaded");
   };
 
+  const exportExcel = async () => {
+    try {
+      await downloadFile(
+        `/attendance/register.xlsx?classroomId=${classroomId}&from=${from}&to=${to}`,
+        token,
+        `${(report?.classroom.name || "class").replace(/[^\w-]+/g, "_")}_register_${from}_to_${to}.xlsx`,
+      );
+      toast.success("Excel register downloaded");
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const maxDay = Math.max(1, ...(report?.days || []).map((d) => d.total));
+  const multiPeriod = new Set((report?.days || []).map((d) => d.date)).size < (report?.days || []).length;
 
   const stats = report
     ? [
@@ -232,6 +251,20 @@ const Reports = () => {
             <FiDownload /> Export CSV
           </button>
           <button
+            onClick={exportExcel}
+            disabled={!report}
+            className="px-4 py-2.5 rounded-lg text-sm font-semibold border border-[var(--border-subtle)] text-[var(--text-main)] hover:bg-[var(--bg-input)] flex items-center justify-center gap-2"
+          >
+            <FiGrid /> Excel register
+          </button>
+          <button
+            onClick={() => setShowAlerts((v) => !v)}
+            disabled={!report}
+            className="px-4 py-2.5 rounded-lg text-sm font-semibold border border-[var(--border-subtle)] text-[var(--text-main)] hover:bg-[var(--bg-input)] flex items-center justify-center gap-2"
+          >
+            <FiBell /> Alerts
+          </button>
+          <button
             onClick={() => window.print()}
             disabled={!report}
             className="px-4 py-2.5 rounded-lg text-sm font-semibold border border-[var(--border-subtle)] text-[var(--text-main)] hover:bg-[var(--bg-input)] flex items-center justify-center gap-2"
@@ -240,6 +273,8 @@ const Reports = () => {
           </button>
         </div>
       </div>
+
+      {showAlerts && <AlertsPanel classroomId={classroomId} from={from} to={to} onClose={() => setShowAlerts(false)} />}
 
       {error && (
         <div className="glass-card p-4 text-[var(--status-absent-text)] bg-[var(--status-absent-bg)]">{error}</div>
@@ -278,16 +313,19 @@ const Reports = () => {
           ) : (
             <div className="flex items-end gap-2 h-48 overflow-x-auto pb-2">
               {report.days.map((d) => (
-                <div key={d.date} className="flex flex-col items-center gap-1 min-w-[36px] flex-1 h-full justify-end group">
+                <div key={`${d.date}-${d.period}`} className="flex flex-col items-center gap-1 min-w-[36px] flex-1 h-full justify-end group">
                   <span className="text-[10px] font-bold text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity">
                     {d.present}/{d.total}
                   </span>
                   <div
                     className={`w-full max-w-[40px] rounded-t-lg ${d.percentage >= report.threshold ? "bg-[var(--color-primary)]" : "bg-amber-500"}`}
                     style={{ height: `${Math.max(4, (d.present / maxDay) * 100)}%` }}
-                    title={`${formatDay(d.date)}: ${d.present} of ${d.total} present (${d.percentage}%)`}
+                    title={`${formatDay(d.date)}${multiPeriod ? ` · Lecture ${d.period}` : ""}: ${d.present} of ${d.total} present (${d.percentage}%)`}
                   />
-                  <span className="text-[10px] text-[var(--text-muted)] whitespace-nowrap">{formatDay(d.date)}</span>
+                  <span className="text-[10px] text-[var(--text-muted)] whitespace-nowrap">
+                    {formatDay(d.date)}
+                    {multiPeriod ? ` L${d.period}` : ""}
+                  </span>
                 </div>
               ))}
             </div>
@@ -374,13 +412,18 @@ const Reports = () => {
                     {s.rollNumber}
                   </div>
                   <div className="hidden md:block md:col-span-2 text-center font-mono text-sm text-[var(--text-secondary)]">
-                    {s.present}/{report.totalSessions}
+                    {s.present}/{s.totalSessions}
+                    {(s.dutyLeave > 0 || s.medicalLeave > 0) && (
+                      <span className="block text-[10px] text-[var(--text-muted)]">
+                        {[s.dutyLeave ? `DL ${s.dutyLeave}` : "", s.medicalLeave ? `ML ${s.medicalLeave}` : ""].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
                   </div>
                   <div className="col-span-5 md:col-span-2">
                     <p className="text-sm font-bold text-[var(--text-main)]">
                       {s.percentage}%
                       <span className="md:hidden font-mono font-normal text-[11px] text-[var(--text-muted)] ml-1.5">
-                        {s.present}/{report.totalSessions}
+                        {s.present}/{s.totalSessions}
                       </span>
                     </p>
                     <div className="h-1.5 rounded-full bg-[var(--border-subtle)] overflow-hidden mt-1">

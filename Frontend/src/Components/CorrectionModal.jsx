@@ -37,6 +37,7 @@ const CorrectionModal = ({
   const [addToTraining, setAddToTraining] = useState(true);
   const [newName, setNewName] = useState("");
   const [newRoll, setNewRoll] = useState("");
+  const [consent, setConsent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,6 +50,7 @@ const CorrectionModal = ({
     setAddToTraining(true);
     setNewName("");
     setNewRoll("");
+    setConsent(false);
     setError("");
   }, [isOpen, faceIndex]);
 
@@ -61,7 +63,7 @@ const CorrectionModal = ({
 
   const canSave =
     (correctionType === "different_student" && selectedStudentId) ||
-    (correctionType === "new_student" && newName.trim() && newRoll.trim()) ||
+    (correctionType === "new_student" && newName.trim() && newRoll.trim() && consent) ||
     correctionType === "not_enrolled";
 
   const handleSave = async () => {
@@ -74,7 +76,7 @@ const CorrectionModal = ({
       onClose();
     } else if (correctionType === "new_student") {
       setSaving(true);
-      const result = await onEnrollNew({ faceIndex, name: newName.trim(), rollNumber: newRoll.trim() });
+      const result = await onEnrollNew({ faceIndex, name: newName.trim(), rollNumber: newRoll.trim(), consent });
       setSaving(false);
       if (result?.error) {
         setError(result.error);
@@ -246,8 +248,12 @@ const CorrectionModal = ({
                       className="px-3 py-2 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-sm text-[var(--text-main)] focus:border-[var(--color-primary)] focus:outline-none"
                     />
                     <p className="sm:col-span-2 text-xs text-[var(--text-muted)]">
-                      This face is saved as their enrollment photo and they are marked present.
+                      This face is saved as their enrolment photo and they are marked present.
                     </p>
+                    <label className="sm:col-span-2 flex items-start gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
+                      <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[var(--color-primary)]" />
+                      The student has agreed to their photo and face data being stored for attendance.
+                    </label>
                   </div>
                 )}
               </div>

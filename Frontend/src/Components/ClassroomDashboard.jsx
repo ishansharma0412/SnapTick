@@ -19,6 +19,7 @@ import {
 import { useClassroom } from "../context/ClassroomContext";
 import { useAuth } from "../context/AuthContext";
 import API_URL from "../config/api";
+import { api, toDay } from "../utils/api";
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -68,6 +69,28 @@ export default function ClassroomDashboard() {
   }, [token, classrooms.length]);
 
   const statsFor = (id) => overview?.classrooms.find((c) => c.classroomId === id);
+
+  const [pendingByClass, setPendingByClass] = useState({});
+  const [holidays, setHolidays] = useState([]);
+  useEffect(() => {
+    if (!token) return;
+    api("/requests/pending-count", { token }).then(setPendingByClass).catch(() => {});
+    api("/admin/holidays", { token }).then(setHolidays).catch(() => {});
+  }, [token]);
+  const todayHoliday = holidays.find((h) => h.day === toDay());
+
+  // Lecture running now, or the next one today, from every classroom's timetable
+  const lectureNow = (() => {
+    const now = new Date();
+    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const today = (overview?.classrooms || [])
+      .flatMap((c) => (c.schedule || []).filter((s) => s.day === now.getDay()).map((s) => ({ ...s, classroomId: c.classroomId, name: c.name })))
+      .sort((a, b) => a.start.localeCompare(b.start));
+    const current = today.find((s) => s.start <= hhmm && hhmm < s.end);
+    if (current) return { ...current, when: "now" };
+    const next = today.find((s) => s.start > hhmm);
+    return next ? { ...next, when: "next" } : today.length ? { when: "done" } : null;
+  })();
 
   const openCreateModal = () => {
     setEditingClassroom(null);
@@ -165,6 +188,33 @@ export default function ClassroomDashboard() {
           <FiPlus /> New Classroom
         </button>
       </div>
+
+      {todayHoliday && (
+        <div className="mb-6 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-sm">
+          Today is a holiday: <b>{todayHoliday.label}</b>
+        </div>
+      )}
+
+      {lectureNow && lectureNow.when !== "done" && (
+        <div className="surface-ink rounded-xl bg-[var(--bg-sidebar)] p-5 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <p className="eyebrow flex items-center gap-2">
+              {lectureNow.when === "now" ? <span className="accent-dot" /> : null}
+              {lectureNow.when === "now" ? "In progress" : "Next lecture today"}
+            </p>
+            <p className="font-display text-3xl leading-tight mt-1">{lectureNow.name}</p>
+            <p className="text-sm text-[var(--text-secondary)] font-mono mt-1">
+              Lecture {lectureNow.period} · {lectureNow.start}–{lectureNow.end}
+            </p>
+          </div>
+          <button
+            onClick={() => navigate(`/classroom/${lectureNow.classroomId}/attendance`)}
+            className="btn-primary px-5 py-3 rounded-lg flex items-center justify-center gap-2 self-start sm:self-auto whitespace-nowrap"
+          >
+            <FiCamera /> Take attendance
+          </button>
+        </div>
+      )}
 
       {/* Overview stats */}
       {classrooms.length > 0 && (
@@ -312,6 +362,11 @@ export default function ClassroomDashboard() {
                     <div className="flex items-center justify-between text-sm">
                       <span className="flex items-center gap-1.5 text-[var(--text-secondary)] font-medium">
                         <FiUsers size={14} /> {students} {students === 1 ? "student" : "students"}
+                        {pendingByClass[classroom._id] > 0 && (
+                          <span className="ml-1 px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--accent-ink)] text-[10px] font-bold">
+                            {pendingByClass[classroom._id]} request{pendingByClass[classroom._id] > 1 ? "s" : ""}
+                          </span>
+                        )}
                       </span>
                       <span
                         className={`flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full ${

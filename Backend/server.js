@@ -9,6 +9,9 @@ const enrollRoute = require("./routes/enroll");
 const attendanceRoute = require("./routes/attendance");
 const authRoute = require("./routes/auth");
 const classroomRoute = require("./routes/classroom");
+const requestsRoute = require("./routes/requests");
+const portalRoute = require("./routes/portal");
+const adminRoute = require("./routes/admin");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -92,6 +95,9 @@ app.use("/auth", authLimiter, authRoute); // Stricter rate limit for auth
 app.use("/classroom", classroomRoute);
 app.use("/enroll", enrollRoute);
 app.use("/attendance", attendanceRoute);
+app.use("/requests", requestsRoute);
+app.use("/portal", (req, res, next) => (/^\/(login|register|forgot-password|reset-password)/.test(req.path) ? authLimiter(req, res, next) : next()), portalRoute);
+app.use("/admin", adminRoute);
 
 app.get("/", (req, res) => {
   res.send("SnapTick API Server - Ready!");
@@ -134,6 +140,9 @@ app.use((err, req, res, next) => {
   }
   if (err?.message === "Not allowed by CORS") {
     return res.status(403).json({ error: "Origin not allowed" });
+  }
+  if (err?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Invalid request body." });
   }
   if (err?.type === "entity.too.large") {
     return res.status(413).json({ error: "Request is too large." });

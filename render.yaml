@@ -28,3 +28,19 @@ services:
         sync: false # e.g. https://<user>-snaptick-face.hf.space
       - key: ALLOWED_EMAIL_DOMAINS
         sync: false # e.g. abes.ac.in (leave empty to allow any email)
+      - key: ADMIN_EMAILS
+        sync: false # HOD / admin emails, comma-separated
+      - key: EDIT_LOCK_HOURS
+        value: "48"
+      - key: SMTP_HOST
+        sync: false # e.g. smtp.gmail.com (optional; without SMTP emails go to the log)
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false # e.g. a Gmail app password
+      - key: MAIL_FROM
+        sync: false # e.g. SnapTick <attendance@college.edu>
+      - key: CRON_SECRET
+        generateValue: true

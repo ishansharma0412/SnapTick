@@ -6,6 +6,7 @@ const Attendance = require("../models/attendance");
 const { authMiddleware } = require("./auth");
 const mongoose = require("mongoose");
 const { deletePhoto } = require("../storage/photos");
+const { audit } = require("../services/audit");
 
 const router = express.Router();
 
@@ -171,6 +172,69 @@ router.put("/:id", authMiddleware, async (req, res) => {
   }
 });
 
+// PUT /classroom/:id/settings - timetable, eligibility threshold, subject code, capture mode
+router.put("/:id/settings", authMiddleware, async (req, res) => {
+  try {
+    const classroom = await Classroom.findById(req.params.id);
+    if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+    if (classroom.teacherId.toString() !== req.teacher.id) {
+      return res.status(403).json({ error: "You can only update your own classrooms" });
+    }
+    const { schedule, threshold, liveCaptureOnly, subjectCode } = req.body;
+
+    if (schedule !== undefined) {
+      if (!Array.isArray(schedule) || schedule.length > 40) return res.status(400).json({ error: "Invalid timetable." });
+      const time = /^([01]\d|2[0-3]):[0-5]\d$/;
+      for (const slot of schedule) {
+        if (!(slot.day >= 0 && slot.day <= 6) || !time.test(slot.start) || !time.test(slot.end) || slot.start >= slot.end) {
+          return res.status(400).json({ error: "Each lecture needs a day and a start time before its end time." });
+        }
+      }
+      classroom.schedule = schedule.map((s) => ({ day: Number(s.day), start: s.start, end: s.end, period: Math.min(12, Math.max(1, Number(s.period) || 1)) }));
+    }
+    if (threshold !== undefined) {
+      const t = Number(threshold);
+      if (!(t >= 1 && t <= 100)) return res.status(400).json({ error: "Threshold must be between 1 and 100." });
+      classroom.threshold = t;
+    }
+    if (liveCaptureOnly !== undefined) classroom.liveCaptureOnly = Boolean(liveCaptureOnly);
+    if (subjectCode !== undefined) classroom.subjectCode = String(subjectCode).trim().slice(0, 30);
+
+    await classroom.save();
+    audit(req.teacher, "classroom.settings", { classroomId: classroom._id, details: { threshold: classroom.threshold, liveCaptureOnly: classroom.liveCaptureOnly, lectures: classroom.schedule.length } });
+    res.json({ message: "Settings saved", classroom });
+  } catch (error) {
+    console.error("Classroom settings error:", error);
+    res.status(500).json({ error: "Failed to save settings" });
+  }
+});
+
+// POST /classroom/:id/purge-biometrics - delete every student's photos and face data
+// (end of semester / data-retention). Attendance records are kept.
+router.post("/:id/purge-biometrics", authMiddleware, async (req, res) => {
+  try {
+    const classroom = await Classroom.findById(req.params.id);
+    if (!classroom) return res.status(404).json({ error: "Classroom not found" });
+    if (classroom.teacherId.toString() !== req.teacher.id) {
+      return res.status(403).json({ error: "You can only manage your own classrooms" });
+    }
+    if (req.body.confirm !== classroom.name) {
+      return res.status(400).json({ error: "Type the classroom name to confirm." });
+    }
+    const students = await Student.find({ classroomId: classroom._id }, "image");
+    for (const st of students) await deletePhoto(st.image);
+    const result = await Student.updateMany(
+      { classroomId: classroom._id },
+      { $set: { faceDescriptors: [], descriptorCount: 0, image: null }, $unset: { faceDescriptor: 1 } }
+    );
+    audit(req.teacher, "classroom.purge_biometrics", { classroomId: classroom._id, details: { students: result.modifiedCount } });
+    res.json({ message: `Removed photos and face data for ${result.modifiedCount} student(s). Attendance records were kept.` });
+  } catch (error) {
+    console.error("Purge biometrics error:", error);
+    res.status(500).json({ error: "Failed to delete face data" });
+  }
+});
+
 // DELETE /classroom/:id - delete classroom (cascade: students and attendance)
 router.delete("/:id", authMiddleware, async (req, res) => {
   try {
@@ -192,6 +256,8 @@ router.delete("/:id", authMiddleware, async (req, res) => {
     for (const student of students) {
       await deletePhoto(student.image);
     }
+
+    audit(req.teacher, "classroom.delete", { details: { name: classroom.name } });
 
     // Cascade: remove all students in this classroom
     const deleteStudentsResult = await Student.deleteMany({ classroomId: id });

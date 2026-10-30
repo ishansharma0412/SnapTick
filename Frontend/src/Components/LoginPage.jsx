@@ -11,6 +11,7 @@ import {
   FiCamera,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
+import ForgotPassword from "./ForgotPassword";
 
 export default function LoginPage({ isDark, setIsDark }) {
   const [searchParams] = useSearchParams();
@@ -21,6 +22,8 @@ export default function LoginPage({ isDark, setIsDark }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [department, setDepartment] = useState("");
+  const [forgot, setForgot] = useState(false);
 
   const { login, register } = useAuth();
 
@@ -44,7 +47,7 @@ export default function LoginPage({ isDark, setIsDark }) {
           setLoading(false);
           return;
         }
-        await register(name, email, password);
+        await register(name, email, password, department.trim());
       }
     } catch (err) {
       setError(err.message);
@@ -163,6 +166,10 @@ export default function LoginPage({ isDark, setIsDark }) {
               </span>
             </div>
 
+            {forgot ? (
+              <ForgotPassword endpoint="/auth" loginField="email" loginLabel="Email" initialLogin={email} onDone={() => setForgot(false)} />
+            ) : (
+            <>
             {/* Form header */}
             <div className="mb-8">
               <p className="eyebrow mb-3">{isLogin ? "Faculty sign in" : "Faculty registration"}</p>
@@ -209,6 +216,16 @@ export default function LoginPage({ isDark, setIsDark }) {
                       required={!isLogin}
                     />
                   </div>
+                  <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2 mt-5">
+                    Department <span className="text-[var(--text-muted)] font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    placeholder="e.g. Computer Applications"
+                    className="input-premium w-full px-4 py-3"
+                  />
                 </Motion.div>
               )}
 
@@ -230,9 +247,14 @@ export default function LoginPage({ isDark, setIsDark }) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-[var(--text-secondary)] mb-2">
-                  Password
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-[var(--text-secondary)]">Password</label>
+                  {isLogin && (
+                    <button type="button" onClick={() => setForgot(true)} className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text-main)]">
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <FiLock className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
                   <input
@@ -242,7 +264,7 @@ export default function LoginPage({ isDark, setIsDark }) {
                     placeholder={isLogin ? "Your password" : "At least 8 characters"}
                     className="input-premium w-full pl-11 pr-4 py-3"
                     required
-                    minLength={6}
+                    minLength={isLogin ? 1 : 8}
                   />
                 </div>
               </div>
@@ -272,6 +294,14 @@ export default function LoginPage({ isDark, setIsDark }) {
                 {isLogin ? "Sign up" : "Sign in"}
               </button>
             </p>
+            <p className="mt-3 text-center text-sm text-[var(--text-muted)]">
+              Student?{" "}
+              <Link to="/student" className="font-medium text-[var(--text-main)] hover:underline">
+                Check your attendance
+              </Link>
+            </p>
+            </>
+            )}
           </Motion.div>
         </div>
       </div>

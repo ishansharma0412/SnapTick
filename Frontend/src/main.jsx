@@ -13,3 +13,10 @@ root.render(
     </AuthProvider>
   </BrowserRouter>,
 );
+
+// Installable app (PWA); only in production builds so dev hot-reload is unaffected
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}

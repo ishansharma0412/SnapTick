@@ -7,6 +7,11 @@ const teacherSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
   role: { type: String, enum: ["teacher", "admin"], default: "teacher" },
+  department: { type: String, default: "", trim: true },
+  // Password reset one-time code (hashed) and its expiry
+  resetCodeHash: { type: String },
+  resetExpires: { type: Date },
+  resetAttempts: { type: Number, default: 0 },
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now },
   lastLogin: { type: Date }
@@ -30,6 +35,9 @@ teacherSchema.methods.comparePassword = async function (candidatePassword) {
 teacherSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
+  delete obj.resetCodeHash;
+  delete obj.resetExpires;
+  delete obj.resetAttempts;
   return obj;
 };
 

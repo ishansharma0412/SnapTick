@@ -99,8 +99,8 @@ export function AuthProvider({ children }) {
     return data;
   }
 
-  async function register(name, email, password) {
-    const data = await postJson("/auth/register", { name, email, password });
+  async function register(name, email, password, department = "") {
+    const data = await postJson("/auth/register", { name, email, password, department });
 
     localStorage.setItem("token", data.token);
     setToken(data.token);

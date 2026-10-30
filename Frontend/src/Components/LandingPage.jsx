@@ -68,6 +68,9 @@ export default function LandingPage({ isDark, setIsDark }) {
               >
                 {isDark ? <FiSun size={16} /> : <FiMoon size={16} />}
               </button>
+              <Link to="/student" className="hidden sm:inline text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] px-3 py-2 whitespace-nowrap">
+                Students
+              </Link>
               <Link to="/login" className="text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-main)] px-2 sm:px-3 py-2 whitespace-nowrap">
                 Sign in
               </Link>

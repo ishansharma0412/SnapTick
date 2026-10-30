@@ -10,6 +10,7 @@ import {
   FiSettings,
   FiUser,
   FiChevronRight,
+  FiShield,
 } from "react-icons/fi";
 import { AnimatePresence, motion as Motion } from "framer-motion";
 import { useAuth } from "./context/AuthContext";
@@ -24,6 +25,11 @@ import EnrollForm from "./Components/EnrollForm";
 import AttendanceUploader from "./Components/AttendanceUploader";
 import ManualAttendance from "./Components/ManualAttendance";
 import Reports from "./Components/Reports";
+import Requests from "./Components/Requests";
+import ChangePassword from "./Components/ChangePassword";
+import AdminPanel from "./Components/AdminPanel";
+import StudentPortal from "./Components/StudentPortal";
+import ClassroomSettings from "./Components/ClassroomSettings";
 
 // Protected route wrapper
 function ProtectedRoute({ children }) {
@@ -53,7 +59,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const { teacher, logout } = useAuth();
+  const { teacher, logout, token } = useAuth();
   const { classrooms } = useClassroom();
   const health = useServiceHealth();
   const settingsRef = useRef(null);
@@ -127,6 +133,21 @@ function DashboardLayout({ children, isDark, setIsDark }) {
           </span>
           Overview
         </Link>
+
+        {teacher?.role === "admin" && (
+          <Link
+            to="/admin"
+            onClick={() => setMobileMenuOpen(false)}
+            className={`group flex items-center gap-3 rounded-xl px-5 py-3.5 text-sm font-medium transition-all duration-300 border ${
+              location.pathname === "/admin"
+                ? "bg-[var(--nav-active-bg)] text-[var(--nav-active-text)] border-[var(--border-subtle)]"
+                : "text-[var(--text-secondary)] border-transparent hover:text-[var(--text-main)]"
+            }`}
+          >
+            <span className="text-lg"><FiShield /></span>
+            Department
+          </Link>
+        )}
 
         {classrooms.length > 0 && (
           <div className="pt-4">
@@ -309,7 +330,8 @@ function DashboardLayout({ children, isDark, setIsDark }) {
                 Account Type
               </span>
               <span className="text-sm font-medium text-[var(--text-main)]">
-                Teacher
+                {teacher?.role === "admin" ? "Admin (HOD)" : "Teacher"}
+                {teacher?.department ? ` · ${teacher.department}` : ""}
               </span>
             </div>
             <div className="flex justify-between items-center py-2 border-b border-[var(--border-subtle)]">
@@ -321,6 +343,9 @@ function DashboardLayout({ children, isDark, setIsDark }) {
                   ? new Date(teacher.createdAt).toLocaleDateString()
                   : "N/A"}
               </span>
+            </div>
+            <div className="py-2 border-b border-[var(--border-subtle)]">
+              <ChangePassword token={token} />
             </div>
             <div className="flex justify-between items-center py-2">
               <span className="text-sm text-[var(--text-muted)]">Theme</span>
@@ -358,7 +383,7 @@ function DashboardLayout({ children, isDark, setIsDark }) {
   return (
     <div className="flex min-h-screen relative overflow-hidden transition-colors duration-300">
       {/* Profile modal */}
-      <AnimatePresence>{profileOpen && <ProfileModal />}</AnimatePresence>
+      <AnimatePresence>{profileOpen && ProfileModal()}</AnimatePresence>
 
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex print:!hidden w-80 flex-col p-6 fixed h-full z-20">
@@ -469,7 +494,19 @@ function App() {
             }
           />
 
+          <Route path="/student" element={<StudentPortal isDark={isDark} setIsDark={setIsDark} />} />
+
           {/* Protected routes */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout isDark={isDark} setIsDark={setIsDark}>
+                  <AdminPanel />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/dashboard"
             element={
@@ -496,6 +533,8 @@ function App() {
             <Route path="attendance" element={<AttendanceUploader />} />
             <Route path="records" element={<ManualAttendance />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="requests" element={<Requests />} />
+            <Route path="settings" element={<ClassroomSettings />} />
           </Route>
 
           {/* Fallback: redirect to dashboard or landing */}

@@ -23,6 +23,21 @@ import CameraCapture from "./CameraCapture";
 import API_URL from "../config/api";
 import { downscaleImage } from "../utils/image";
 import useServiceHealth, { NETWORK_ERROR } from "../utils/useServiceHealth";
+import { currentSlot } from "../utils/api";
+
+const MAX_PHOTOS = 3;
+
+/** Date the photo was taken (EXIF), or null if unknown */
+async function photoTakenAt(file) {
+  try {
+    const { default: exifr } = await import("exifr");
+    const data = await exifr.parse(file, ["DateTimeOriginal", "CreateDate"]);
+    const d = data?.DateTimeOriginal || data?.CreateDate;
+    return d instanceof Date && !isNaN(d) ? d : null;
+  } catch {
+    return null;
+  }
+}
 
 // Compress preview image to reduce browser load
 const createCompressedPreview = (file, maxWidth = 800) => {
@@ -57,14 +72,20 @@ const getConfidenceBgColor = (confidence) => {
 };
 
 const AttendanceUploader = () => {
-  const { classroomId } = useOutletContext();
+  const { classroomId, classroom } = useOutletContext();
   const { getAuthHeadersMultipart, token } = useAuth();
   const toast = useToast();
   const health = useServiceHealth();
 
-  // File upload state
-  const [file, setFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  // File upload state (up to three photos per scan)
+  const [files, setFiles] = useState([]);
+  const [previews, setPreviews] = useState([]);
+  const [activePhoto, setActivePhoto] = useState(0);
+  const [photoWarning, setPhotoWarning] = useState("");
+  const [period, setPeriod] = useState(() => currentSlot(classroom?.schedule)?.period || 1);
+  const file = files[0] || null;
+  const previewUrl = previews[activePhoto] || previews[0] || "";
+  const liveOnly = Boolean(classroom?.liveCaptureOnly);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -78,7 +99,8 @@ const AttendanceUploader = () => {
   // Detection and review state
   const [reviewMode, setReviewMode] = useState(false);
   const [detections, setDetections] = useState([]);
-  const [markedImageUrl, setMarkedImageUrl] = useState("");
+  const [markedImageUrls, setMarkedImageUrls] = useState([]);
+  const markedImageUrl = markedImageUrls[activePhoto] || markedImageUrls[0] || "";
   const [enrolledStudents, setEnrolledStudents] = useState([]);
   const [confirmations, setConfirmations] = useState({}); // faceIndex -> { status, studentId, addToTraining }
   const [alreadyPresent, setAlreadyPresent] = useState([]); // roll numbers already marked today
@@ -99,29 +121,66 @@ const AttendanceUploader = () => {
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnosisResults, setDiagnosisResults] = useState(null);
 
-  const handleFileSelect = async (selectedFile) => {
-    if (selectedFile && selectedFile.type.startsWith("image/")) {
-      // Reset state when a new file is selected
-      setFile(selectedFile);
-      setMarkedStudents([]);
-      setMessage("");
-      setError("");
-      setMarkedImageUrl("");
-      setReviewMode(false);
-      setDetections([]);
-      setConfirmations({});
-      setShowResults(false);
-      setDiagnosisResults(null);
-      const compressed = await createCompressedPreview(selectedFile);
-      setPreviewUrl(compressed || URL.createObjectURL(selectedFile));
+  const handleFileSelect = async (selected, { fromCamera = false } = {}) => {
+    const list = Array.from(selected || []).filter((f) => f?.type?.startsWith("image/"));
+    if (!list.length) return;
+    if (liveOnly && !fromCamera) {
+      setError("This class only accepts photos taken with the in-app camera. Use “Use Camera”.");
+      return;
+    }
+    // After a finished scan, a new photo starts a new scan
+    const fresh = reviewMode || showResults;
+    const baseFiles = fresh ? [] : files;
+    const basePreviews = fresh ? [] : previews;
+    const accepted = list.slice(0, Math.max(0, MAX_PHOTOS - baseFiles.length));
+    if (!accepted.length) {
+      toast.error(`You can add up to ${MAX_PHOTOS} photos per scan.`);
+      return;
+    }
+
+    setMarkedStudents([]);
+    setMessage("");
+    setError("");
+    setMarkedImageUrls([]);
+    setReviewMode(false);
+    setDetections([]);
+    setConfirmations({});
+    setShowResults(false);
+    setDiagnosisResults(null);
+    if (fresh) setPhotoWarning("");
+
+    const newPreviews = await Promise.all(accepted.map(async (f) => (await createCompressedPreview(f)) || URL.createObjectURL(f)));
+    setFiles([...baseFiles, ...accepted]);
+    setPreviews([...basePreviews, ...newPreviews]);
+    setActivePhoto(baseFiles.length);
+
+    // Warn when a gallery photo was not taken today (it may be an old class photo)
+    if (!fromCamera) {
+      for (const f of accepted) {
+        const taken = await photoTakenAt(f);
+        if (taken && Date.now() - taken.getTime() > 12 * 3600 * 1000) {
+          setPhotoWarning(
+            `A selected photo was taken on ${taken.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}. Attendance should use a photo of today's lecture.`,
+          );
+        }
+      }
     }
   };
 
-  const handleInputChange = (e) => handleFileSelect(e.target.files[0]);
+  const removePhoto = (index) => {
+    setFiles((f) => f.filter((_, i) => i !== index));
+    setPreviews((p) => p.filter((_, i) => i !== index));
+    setActivePhoto(0);
+  };
+
+  const handleInputChange = (e) => {
+    handleFileSelect(e.target.files);
+    e.target.value = "";
+  };
   const handleDrop = (e) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFileSelect(e.dataTransfer.files[0]);
+    handleFileSelect(e.dataTransfer.files);
   };
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -141,12 +200,13 @@ const AttendanceUploader = () => {
     }
 
     const formData = new FormData();
-    formData.append("groupPhoto", await downscaleImage(file));
+    for (const f of files) formData.append("groupPhoto", await downscaleImage(f));
     formData.append("classroomId", classroomId);
+    formData.append("period", String(period));
     setLoading(true);
     setMessage("");
     setError("");
-    setMarkedImageUrl("");
+    setMarkedImageUrls([]);
     setDiagnosisResults(null);
     const startedAt = performance.now();
 
@@ -167,9 +227,10 @@ const AttendanceUploader = () => {
         // Enter review mode
         setReviewMode(true);
         setDetections(data.detections || []);
-        setMarkedImageUrl(
-          data.markedImageUrl ? `${data.markedImageUrl}?t=${Date.now()}` : "",
+        setMarkedImageUrls(
+          (data.markedImageUrls || [data.markedImageUrl]).filter(Boolean).map((u) => `${u}?t=${Date.now()}`),
         );
+        setActivePhoto(0);
         setEnrolledStudents(data.enrolledStudents || []);
         setAlreadyPresent(data.alreadyPresent || []);
         setManualPresent([]);
@@ -184,6 +245,7 @@ const AttendanceUploader = () => {
             originalMatch: det.match,
             addToTraining: false,
             embedding: det.embedding,
+            faceImage: det.faceImage,
           };
         });
         setConfirmations(initialConfirmations);
@@ -274,7 +336,7 @@ const AttendanceUploader = () => {
   };
 
   // Add an unrecognized face as a new student, then mark them present
-  const handleEnrollNew = async ({ faceIndex, name, rollNumber }) => {
+  const handleEnrollNew = async ({ faceIndex, name, rollNumber, consent }) => {
     const detection = detections[faceIndex];
     try {
       const res = await fetch(`${API_URL}/attendance/enroll-face`, {
@@ -285,6 +347,7 @@ const AttendanceUploader = () => {
           name,
           rollNumber,
           faceImage: detection?.faceImage,
+          consent: Boolean(consent),
           embedding: detection?.embedding,
         }),
       });
@@ -352,6 +415,7 @@ const AttendanceUploader = () => {
         // Always add to training for confirmed/corrected faces to improve recognition
         addToTraining: true,
         embedding: conf.embedding,
+        faceImage: conf.faceImage,
       }));
 
     // Include skipped faces
@@ -383,6 +447,7 @@ const AttendanceUploader = () => {
         body: JSON.stringify({
           classroomId,
           confirmations: allConfirmations,
+          period,
           manualStudentIds: manualPresent,
         }),
       });
@@ -412,9 +477,11 @@ const AttendanceUploader = () => {
 
   // Reset all state
   const clearState = () => {
-    setFile(null);
-    setPreviewUrl("");
-    setMarkedImageUrl("");
+    setFiles([]);
+    setPreviews([]);
+    setActivePhoto(0);
+    setPhotoWarning("");
+    setMarkedImageUrls([]);
     setMarkedStudents([]);
     setMessage("");
     setError("");
@@ -483,7 +550,7 @@ const AttendanceUploader = () => {
             onClose={() => setCameraOpen(false)}
             onCapture={(captured) => {
               setCameraOpen(false);
-              handleFileSelect(captured);
+              handleFileSelect([captured], { fromCamera: true });
             }}
           />
         )}
@@ -512,6 +579,18 @@ const AttendanceUploader = () => {
               <FiCamera className="text-[var(--text-muted)]" /> Class photograph
             </h2>
             <div className="flex items-center gap-2">
+              <select
+                value={period}
+                onChange={(e) => setPeriod(Number(e.target.value))}
+                disabled={reviewMode || showResults}
+                className="input-premium text-xs font-bold px-2 py-1 rounded-full"
+                aria-label="Lecture number"
+                title="Lecture number in the day"
+              >
+                {[1, 2, 3, 4, 5, 6].map((p) => (
+                  <option key={p} value={p}>Lecture {p}</option>
+                ))}
+              </select>
               {!reviewMode && (
                 <button
                   type="button"
@@ -534,7 +613,7 @@ const AttendanceUploader = () => {
 
           <form onSubmit={handleDetect} className="flex-1 flex flex-col">
             <div
-              onClick={() => !reviewMode && fileInputRef.current?.click()}
+              onClick={() => !reviewMode && (liveOnly ? setCameraOpen(true) : fileInputRef.current?.click())}
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
@@ -550,6 +629,7 @@ const AttendanceUploader = () => {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 className="hidden"
                 onChange={handleInputChange}
               />
@@ -573,14 +653,56 @@ const AttendanceUploader = () => {
                     <FiUploadCloud className="text-4xl text-[var(--text-muted)]" />
                   </div>
                   <p className="text-[var(--text-main)] font-bold text-lg">
-                    Upload a class photograph
+                    {liveOnly ? "Capture the class with the camera" : "Upload a class photograph"}
                   </p>
                   <p className="text-[var(--text-muted)] text-sm mt-1">
-                    Drag and drop a JPG or PNG, or capture one with the camera
+                    {liveOnly
+                      ? "This class accepts live camera photos only"
+                      : `Drag and drop up to ${MAX_PHOTOS} photos for a large hall, or use the camera`}
                   </p>
                 </div>
               )}
             </div>
+
+            {/* Photos in this scan */}
+            {(files.length > 0 || markedImageUrls.length > 1) && (
+              <div className="flex items-center gap-2 mt-3 overflow-x-auto no-scrollbar">
+                {(markedImageUrls.length && (reviewMode || showResults) ? markedImageUrls : previews).map((src, i) => (
+                  <div key={i} className="relative flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setActivePhoto(i)}
+                      className={`h-14 w-20 rounded-lg overflow-hidden border-2 ${activePhoto === i ? "border-[var(--color-primary)]" : "border-[var(--border-subtle)]"}`}
+                      aria-label={`Show photo ${i + 1}`}
+                    >
+                      <img src={src} alt="" className="h-full w-full object-cover" />
+                    </button>
+                    {!reviewMode && !showResults && (
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(i)}
+                        className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-[var(--color-primary)] text-[var(--color-primary-text)] text-[10px] flex items-center justify-center"
+                        aria-label={`Remove photo ${i + 1}`}
+                      >
+                        <FiX size={10} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {!reviewMode && !showResults && files.length > 0 && files.length < MAX_PHOTOS && (
+                  <button
+                    type="button"
+                    onClick={() => (liveOnly ? setCameraOpen(true) : fileInputRef.current?.click())}
+                    className="h-14 w-20 flex-shrink-0 rounded-lg border-2 border-dashed border-[var(--border-dashed)] text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                  >
+                    + Photo
+                  </button>
+                )}
+              </div>
+            )}
+            {photoWarning && !reviewMode && !showResults && (
+              <p className="mt-3 p-3 rounded-xl text-sm bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300">{photoWarning}</p>
+            )}
 
             {/* Buttons vary by mode */}
             {!reviewMode && !showResults && (

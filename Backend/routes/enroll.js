@@ -8,7 +8,8 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const { savePhotoFromFile, readPhoto, deletePhoto } = require("../storage/photos");
+const { savePhoto, savePhotoFromFile, readPhoto, deletePhoto } = require("../storage/photos");
+const { audit } = require("../services/audit");
 
 const router = express.Router();
 
@@ -140,10 +141,14 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
     console.log("[Enroll] Request received");
     const { name, rollNumber, classroomId } = req.body;
     const teacherId = req.teacher.id;
-    console.log(`[Enroll] name=${name}, rollNumber=${rollNumber}, classroomId=${classroomId}`);
 
     if (!name || !rollNumber) {
+      removeUpload(req.file);
       return res.status(400).json({ error: "name and rollNumber are required" });
+    }
+    if (String(req.body.consent) !== "true") {
+      removeUpload(req.file);
+      return res.status(400).json({ error: "Confirm that the student has consented to face enrolment." });
     }
 
     // Validate classroom
@@ -193,11 +198,15 @@ router.post("/", authMiddleware, upload.single("image"), async (req, res) => {
       faceDescriptors: [descriptor],
       faceDescriptor: descriptor,
       descriptorCount: 1,
+      consentAt: new Date(),
+      email: String(req.body.email || "").slice(0, 120),
+      phone: String(req.body.phone || "").slice(0, 30),
       teacherId,
       classroomId
     });
 
     await student.save();
+    audit(req.teacher, "student.enroll", { classroomId, target: rollNumber, details: { name } });
     res.status(201).json({ message: "Student enrolled successfully!", student });
   } catch (error) {
     console.error("Enroll error:", error.message);
@@ -252,8 +261,12 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
       }
       return res.status(409).json({ error: "Roll number already exists in this classroom" });
     }
+    const before = { name: student.name, rollNumber: student.rollNumber };
     student.name = name;
     student.rollNumber = rollNumber;
+    for (const key of ["email", "phone", "guardianEmail", "guardianPhone"]) {
+      if (typeof req.body[key] === "string") student[key] = req.body[key].trim().slice(0, 120);
+    }
 
     if (req.file) {
       const absoluteImagePath = req.file.path;
@@ -287,7 +300,8 @@ router.put("/:id", authMiddleware, upload.single("image"), async (req, res) => {
     }
 
     const updatedStudent = await student.save();
-    res.status(200).json({ message: "Student updated successfully (new photo added)", student: updatedStudent });
+    audit(req.teacher, "student.update", { classroomId: student.classroomId, target: rollNumber, details: { before, photo: Boolean(req.file) } });
+    res.status(200).json({ message: req.file ? "Student updated and photo replaced" : "Student updated", student: updatedStudent });
 
   } catch (error) {
     console.error("Update error:", error);
@@ -459,6 +473,7 @@ router.delete("/:id", authMiddleware, async (req, res) => {
     }
 
     await deletePhoto(student.image);
+    audit(req.teacher, "student.delete", { classroomId: student.classroomId, target: student.rollNumber, details: { name: student.name } });
 
     await Student.findByIdAndDelete(id);
     res.status(200).json({ message: "Student deleted successfully" });
@@ -616,6 +631,144 @@ router.post("/re-embed", authMiddleware, async (req, res) => {
   }
 });
 
+
+// ---------- Bulk import
+
+/** Minimal CSV parser (quotes, commas, CRLF). Returns an array of rows. */
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((c) => c.trim())) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.some((c) => c.trim())) rows.push(row);
+  return rows;
+}
+
+const COLUMN_ALIASES = {
+  rollNumber: ["roll", "rollno", "roll no", "roll no.", "roll number", "rollnumber", "enrollment", "enrolment no"],
+  name: ["name", "student name", "full name"],
+  email: ["email", "email id", "student email"],
+  phone: ["phone", "mobile", "phone number", "mobile number"],
+  guardianEmail: ["guardian email", "parent email", "guardianemail"],
+  guardianPhone: ["guardian phone", "parent phone", "parent mobile", "guardianphone"],
+};
+
+// POST /enroll/import-roster - create students from a CSV roster (no photos yet)
+// body: { classroomId, csv }  columns: roll number, name, [email, phone, guardian email, guardian phone]
+router.post("/import-roster", authMiddleware, async (req, res) => {
+  try {
+    const { classroomId, csv } = req.body;
+    const teacherId = req.teacher.id;
+    const classroomCheck = await verifyClassroom(classroomId, teacherId);
+    if (!classroomCheck.valid) return res.status(400).json({ error: classroomCheck.error });
+    if (typeof csv !== "string" || !csv.trim()) return res.status(400).json({ error: "The CSV file is empty." });
+
+    const rows = parseCsv(csv.replace(/^﻿/, ""));
+    const header = rows.shift().map((h) => h.trim().toLowerCase());
+    const col = {};
+    for (const [key, aliases] of Object.entries(COLUMN_ALIASES)) {
+      const idx = header.findIndex((h) => aliases.includes(h));
+      if (idx >= 0) col[key] = idx;
+    }
+    if (col.rollNumber === undefined || col.name === undefined) {
+      return res.status(400).json({ error: "The CSV needs 'Roll Number' and 'Name' columns." });
+    }
+    if (rows.length > 500) return res.status(400).json({ error: "Import at most 500 students at a time." });
+
+    const existing = new Set((await Student.find({ classroomId }, "rollNumber").lean()).map((s) => s.rollNumber));
+    const created = [], skipped = [];
+    for (const [i, r] of rows.entries()) {
+      const get = (k) => (col[k] !== undefined ? String(r[col[k]] || "").trim() : "");
+      const rollNumber = get("rollNumber"), name = get("name");
+      if (!rollNumber || !name) { skipped.push({ line: i + 2, reason: "missing roll number or name" }); continue; }
+      if (existing.has(rollNumber)) { skipped.push({ line: i + 2, rollNumber, reason: "already in this classroom" }); continue; }
+      existing.add(rollNumber);
+      created.push({
+        name: name.slice(0, 100), rollNumber: rollNumber.slice(0, 40),
+        email: get("email").toLowerCase().slice(0, 120), phone: get("phone").slice(0, 30),
+        guardianEmail: get("guardianEmail").toLowerCase().slice(0, 120), guardianPhone: get("guardianPhone").slice(0, 30),
+        faceDescriptors: [], descriptorCount: 0, teacherId, classroomId,
+      });
+    }
+    if (created.length) await Student.insertMany(created, { ordered: false });
+    audit(req.teacher, "student.import_roster", { classroomId, details: { created: created.length, skipped: skipped.length } });
+    res.json({ message: `Added ${created.length} student(s); skipped ${skipped.length}.`, created: created.length, skipped });
+  } catch (error) {
+    console.error("Roster import error:", error);
+    res.status(500).json({ error: "Failed to import the roster." });
+  }
+});
+
+const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
+
+// POST /enroll/import-photos - ZIP of photos named by roll number (e.g. 2300320100107.jpg)
+router.post("/import-photos", authMiddleware, zipUpload.single("zip"), async (req, res) => {
+  try {
+    const { classroomId } = req.body;
+    const teacherId = req.teacher.id;
+    const classroomCheck = await verifyClassroom(classroomId, teacherId);
+    if (!classroomCheck.valid) return res.status(400).json({ error: classroomCheck.error });
+    if (String(req.body.consent) !== "true") {
+      return res.status(400).json({ error: "Confirm that these students have consented to face enrolment." });
+    }
+    if (!req.file) return res.status(400).json({ error: "Upload a .zip file of photos." });
+
+    const AdmZip = require("adm-zip");
+    let entries;
+    try {
+      entries = new AdmZip(req.file.buffer).getEntries();
+    } catch {
+      return res.status(400).json({ error: "That file is not a valid ZIP archive." });
+    }
+    const images = entries.filter((e) => !e.isDirectory && /\.(jpe?g|png|webp)$/i.test(e.entryName) && !path.basename(e.entryName).startsWith("."));
+    if (images.length > 300) return res.status(400).json({ error: "Upload at most 300 photos at a time." });
+
+    const students = await Student.find({ classroomId });
+    const byRoll = new Map(students.map((s) => [s.rollNumber.toLowerCase(), s]));
+    const results = { enrolled: 0, failed: [], unmatched: [] };
+
+    for (const entry of images) {
+      const roll = path.basename(entry.entryName).replace(/\.[^.]+$/, "").trim().toLowerCase();
+      const student = byRoll.get(roll);
+      if (!student) { results.unmatched.push(path.basename(entry.entryName)); continue; }
+      const buffer = entry.getData();
+      if (buffer.length > 8 * 1024 * 1024) { results.failed.push({ rollNumber: student.rollNumber, reason: "photo larger than 8 MB" }); continue; }
+      try {
+        const faceData = await extractFaceEmbeddingFromBuffer(buffer);
+        const previous = student.image;
+        student.image = await savePhoto(buffer, { teacherId, classroomId });
+        await deletePhoto(previous);
+        student.faceDescriptors = [...(student.faceDescriptors || []), faceData.embedding].slice(-MAX_TRAINING_SAMPLES);
+        student.faceDescriptor = faceData.embedding;
+        student.descriptorCount = student.faceDescriptors.length;
+        student.consentAt = student.consentAt || new Date();
+        await student.save();
+        results.enrolled++;
+      } catch (err) {
+        results.failed.push({ rollNumber: student.rollNumber, reason: err.message });
+      }
+    }
+    audit(req.teacher, "student.import_photos", { classroomId, details: { enrolled: results.enrolled, failed: results.failed.length } });
+    res.json({ message: `Enrolled ${results.enrolled} photo(s); ${results.failed.length} failed; ${results.unmatched.length} not matched to a roll number.`, ...results });
+  } catch (error) {
+    console.error("Photo import error:", error);
+    res.status(500).json({ error: "Failed to import photos." });
+  }
+});
 
 // GET /enroll/:id/photo - a student's reference photo (owner only)
 router.get("/:id/photo", authMiddleware, async (req, res) => {
